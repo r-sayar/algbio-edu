@@ -17,7 +17,7 @@ This is a sister repo to [**rna-folding-edu**](https://github.com/r-sayar/rna-fo
 
 | Folder | Algorithm | Demo |
 |---|---|---|
-| [`hmm/`](hmm/index.html)              | Viterbi on a 2-state CpG-island HMM | [open](https://r-sayar.github.io/algbio-edu/hmm/) |
+| [`hmm/`](hmm/index.html)              | **Viterbi, Forward, Backward, Posterior** on a 2-state CpG-island HMM | [open](https://r-sayar.github.io/algbio-edu/hmm/) |
 | [`alignment/`](alignment/index.html)  | Needleman-Wunsch (global) and Smith-Waterman (local) | [open](https://r-sayar.github.io/algbio-edu/alignment/) |
 | [`evoformer/`](evoformer/index.html)  | 3-D voxel walk through one Evoformer block (AlphaFold) | [open](https://r-sayar.github.io/algbio-edu/evoformer/) |
 | [`structure-scores/`](structure-scores/index.html) | GDT-TS / TM-score / lDDT — sliders + intuition | [open](https://r-sayar.github.io/algbio-edu/structure-scores/) |
@@ -31,18 +31,36 @@ HMM viz here visualises):
 
 ## Each demo, in one paragraph
 
-### HMM Viterbi — `hmm/`
+### HMM inference — `hmm/`
 
-A two-state Hidden Markov Model (B = background, I = CpG island)
-with hand-tuned emission and transition probabilities. The trellis
-fills column-by-column; each cell shows `V[s][i]` (max log-prob of
-ending in state `s` at position `i`) plus a back-pointer arrow.
-Traceback follows the back-pointers from the final argmax to recover
-the most-likely state sequence — for the default preset
-`ATATATATCGCGCGCGATATATAT` it correctly emits
-`BBBBBBBBIIIIIIIIBBBBBBBB`.
+A two-state Hidden Markov Model (B = background, I = CpG island) with
+hand-tuned emission and transition probabilities, four algorithms
+selectable from a single dropdown:
+
+- **Viterbi** — max-product. The trellis fills column-by-column; each
+  cell stores the max log-prob of any path ending in `(state, position)`
+  plus a back-pointer. The traceback follows back-pointers from the
+  final argmax to recover the single most-likely state path.
+- **Forward** — sum-product (logsumexp). Same trellis shape but the
+  recurrence sums over all paths instead of maxing over them. Output:
+  `log P(x) = logsumexp_s f[s][n-1]`.
+- **Backward** — sum-product, right-to-left. `b[s][i] = P(x_{i+1}..x_n | state_i = s)`.
+  Independent recurrence, but should agree with Forward on `P(x)` — a
+  built-in correctness check.
+- **Posterior decoding** — runs both Forward and Backward, then
+  `γ[s][i] = exp(f[s][i] + b[s][i] − log P(x))`. The decoded path is
+  `argmax_s γ[s][i]` *at each position independently*. Three trellises
+  are stacked: F, B, γ.
+
+For the default preset `ATATATATCGCGCGCGATATATAT`:
+- Viterbi → `BBBBBBBBIIIIIIIIBBBBBBBB`
+- Forward → `log P(x) = −28.353`
+- Backward → `log P(x) = −28.353` ✓ (matches Forward)
+- Posterior → `BBBBBBBBIIIIIIIIBBBBBBBB` (here it agrees with Viterbi
+  because the signal is strong; on borderline sequences they can differ)
 
 ![HMM Viterbi screenshot](hmm/preview.png)
+![HMM Posterior screenshot](hmm/preview-posterior.png)
 
 ### Pairwise alignment — `alignment/`
 

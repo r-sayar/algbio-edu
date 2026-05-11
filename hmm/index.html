@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>HMM Viterbi visualizer — CpG island detection</title>
+<title>HMM visualizer — Viterbi, Forward, Backward, Posterior</title>
 <style>
   :root {
     --bg: #fafafa;
@@ -73,7 +73,14 @@
   #panel-decoded  { grid-column: 1; grid-row: 2; }
   #panel-params   { grid-column: 2; grid-row: 1 / span 2; }
 
-  /* Viterbi trellis */
+  /* Trellis */
+  .trellis-wrap { margin-bottom: 14px; }
+  .trellis-wrap:last-child { margin-bottom: 0; }
+  .trellis-caption {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px; color: var(--muted);
+    margin-bottom: 4px;
+  }
   table.trellis {
     border-collapse: collapse;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -153,16 +160,27 @@
 <body>
 
 <header>
-  <h1>HMM Viterbi visualizer — CpG island detection</h1>
+  <h1>HMM visualizer — Viterbi, Forward, Backward, Posterior decoding</h1>
   <p>
-    Step through the <a href="https://en.wikipedia.org/wiki/Viterbi_algorithm">Viterbi</a> dynamic-programming
-    algorithm on a 2-state HMM (B = background, I = CpG island). The trellis fills column-by-column;
-    the traceback follows back-pointers from the final argmax to recover the most-likely state path.
+    Step through four classic HMM inference algorithms on a 2-state CpG-island toy
+    (B = background, I = island). <b>Viterbi</b> is max-product over paths and returns
+    the most-likely state path. <b>Forward</b> and <b>Backward</b> are sum-product
+    over all paths and return the data likelihood P(x). <b>Posterior decoding</b>
+    combines them as γ[s][i] = P(state_i = s | x) and picks each position
+    independently. Switch with the dropdown at the top-left.
     Companion to the algorithm code at <a href="https://github.com/r-sayar/cpg-island-hmm">cpg-island-hmm</a>.
   </p>
 </header>
 
 <div id="controls">
+  <label>Algorithm:
+    <select id="algo">
+      <option value="viterbi" selected>Viterbi (most-likely path)</option>
+      <option value="forward">Forward (likelihood)</option>
+      <option value="backward">Backward</option>
+      <option value="posterior">Posterior decoding (γ = f·b / P(x))</option>
+    </select>
+  </label>
   <label>Sequence:
     <select id="preset"></select>
   </label>
@@ -193,13 +211,15 @@
       <span><i style="background: var(--pair)"></i>traceback path</span>
     </div>
     <p style="font-size:12px;color:var(--muted);margin:8px 0 0 0">
-      Top-right corner of each cell shows the back-pointer arrow (← from B, ↖ from I).
-      Cell value = log-probability (more negative = less likely).
+      Viterbi cells show a back-pointer arrow (← from B, ↖ from I) in the top-right.
+      Forward / Backward have no back-pointers (sum-product instead of max-product).
+      Cell value = log-probability (more negative = less likely), except in the γ
+      trellis (Posterior) where the value is the posterior probability in [0, 1].
     </p>
   </section>
 
   <section id="panel-decoded" class="panel">
-    <h2>Decoded path &nbsp; <span class="small">most-likely state sequence (Viterbi)</span></h2>
+    <h2 id="decoded-title">Decoded path &nbsp; <span class="small">most-likely state sequence</span></h2>
     <div id="decoded"></div>
   </section>
 
@@ -242,11 +262,7 @@
 
     <div class="params-block">
       <h3>Recurrence</h3>
-      <pre style="font-size:11px;background:#f8fafc;padding:8px;border-radius:4px;margin:0;color:var(--ink)">V[s][0] = log π[s] + log e[s][x₀]
-V[s][i] = max_t (V[t][i-1] + log a[t][s])
-        + log e[s][x_i]
-backptr[s][i] = argmax_t above
-path: traceback from argmax_s V[s][n-1]</pre>
+      <pre id="recurrence" style="font-size:11px;background:#f8fafc;padding:8px;border-radius:4px;margin:0;color:var(--ink);white-space:pre-wrap"></pre>
     </div>
   </section>
 </main>
@@ -283,34 +299,47 @@ const logA   = A.map(row => row.map(log));
 const logE   = E.map(row => row.map(log));
 
 // ============================================================================
-// 2. Viterbi as a step generator
+// 2. Algorithms as step generators
 // ============================================================================
 //
-// Each next() yields:
-//   { phase: 'fill', i, s, value, bp }      — V[s][i] just computed
-//   { phase: 'traceback', kind: 'argmax', i, s }    — picked final state
-//   { phase: 'traceback', kind: 'follow',  i, s }    — followed bp from i to i-1
-//   { phase: 'done', path }
+// Yields are normalised across all four algorithms:
+//   { phase: 'fill',      matrix, i, s, value, bp?, isProb? }
+//   { phase: 'traceback', matrix, kind, i, s, ... }
+//   { phase: 'done',      path? , logPx? }
+//
+// `matrix` selects which trellis the cell lives in:
+//   V — Viterbi
+//   F — Forward
+//   B — Backward
+//   G — Posterior (γ = f·b / P(x), shown as probability, not log)
 // ============================================================================
+
+// log-sum-exp for the Forward / Backward sum-product recurrence.
+function logSumExp(arr) {
+  let m = -Infinity;
+  for (const v of arr) if (v > m) m = v;
+  if (m === -Infinity) return -Infinity;
+  let s = 0;
+  for (const v of arr) s += Math.exp(v - m);
+  return m + Math.log(s);
+}
 
 function* viterbiSteps(seq) {
   const n = seq.length;
   if (n === 0) { yield { phase: 'done', path: [] }; return; }
 
-  // V[s][i], BP[s][i]
   const V  = STATES.map(() => new Array(n).fill(-Infinity));
   const BP = STATES.map(() => new Array(n).fill(-1));
 
   // ---- column 0: initial ----
   for (let s = 0; s < STATES.length; s++) {
     const sym = SYM_IDX[seq[0]];
-    if (sym === undefined) { V[s][0] = -Infinity; }
-    else                   { V[s][0] = logPi[s] + logE[s][sym]; }
+    V[s][0]  = (sym === undefined) ? -Infinity : logPi[s] + logE[s][sym];
     BP[s][0] = -1;
-    yield { phase: 'fill', i: 0, s, value: V[s][0], bp: -1 };
+    yield { phase: 'fill', matrix: 'V', i: 0, s, value: V[s][0], bp: -1 };
   }
 
-  // ---- columns 1..n-1: recursive ----
+  // ---- columns 1..n-1: recursive (max-product in log space) ----
   for (let i = 1; i < n; i++) {
     const sym = SYM_IDX[seq[i]];
     for (let s = 0; s < STATES.length; s++) {
@@ -322,27 +351,188 @@ function* viterbiSteps(seq) {
       }
       V[s][i]  = (sym === undefined) ? -Infinity : bestVal + logE[s][sym];
       BP[s][i] = bestPrev;
-      yield { phase: 'fill', i, s, value: V[s][i], bp: bestPrev };
+      yield { phase: 'fill', matrix: 'V', i, s, value: V[s][i], bp: bestPrev };
     }
   }
 
-  // ---- traceback: pick last column argmax, follow BP backwards ----
+  // ---- traceback: pick last-column argmax, follow back-pointers ----
   let endS = 0;
   for (let s = 1; s < STATES.length; s++) {
     if (V[s][n-1] > V[endS][n-1]) endS = s;
   }
-  yield { phase: 'traceback', kind: 'argmax', i: n - 1, s: endS };
+  yield { phase: 'traceback', matrix: 'V', kind: 'argmax', i: n - 1, s: endS };
 
   const path = new Array(n);
   path[n-1] = endS;
   for (let i = n - 1; i > 0; i--) {
     const prev = BP[path[i]][i];
     path[i-1] = prev;
-    yield { phase: 'traceback', kind: 'follow', i: i - 1, s: prev };
+    yield { phase: 'traceback', matrix: 'V', kind: 'follow', i: i - 1, s: prev };
   }
 
   yield { phase: 'done', path };
 }
+
+// Forward: f[s][i] = P(x₁..xᵢ, state_i = s)
+// Sum-product (logsumexp) over previous states.  Final P(x) = Σ_s f[s][n-1].
+function* forwardSteps(seq) {
+  const n = seq.length;
+  if (n === 0) { yield { phase: 'done', logPx: 0 }; return; }
+  const F = STATES.map(() => new Array(n).fill(-Infinity));
+  for (let s = 0; s < STATES.length; s++) {
+    F[s][0] = logPi[s] + logE[s][SYM_IDX[seq[0]]];
+    yield { phase: 'fill', matrix: 'F', i: 0, s, value: F[s][0] };
+  }
+  for (let i = 1; i < n; i++) {
+    const sym = SYM_IDX[seq[i]];
+    for (let s = 0; s < STATES.length; s++) {
+      const lse = logSumExp(STATES.map((_, t) => F[t][i-1] + logA[t][s]));
+      F[s][i] = lse + logE[s][sym];
+      yield { phase: 'fill', matrix: 'F', i, s, value: F[s][i] };
+    }
+  }
+  const logPx = logSumExp(STATES.map((_, s) => F[s][n-1]));
+  yield { phase: 'done', logPx };
+}
+
+// Backward: b[s][i] = P(xᵢ₊₁..xₙ | state_i = s)
+// Right-to-left logsumexp.  b[s][n-1] = 1 (log 0).
+function* backwardSteps(seq) {
+  const n = seq.length;
+  if (n === 0) { yield { phase: 'done', logPx: 0 }; return; }
+  const B = STATES.map(() => new Array(n).fill(-Infinity));
+  for (let s = 0; s < STATES.length; s++) {
+    B[s][n-1] = 0;
+    yield { phase: 'fill', matrix: 'B', i: n-1, s, value: 0 };
+  }
+  for (let i = n - 2; i >= 0; i--) {
+    const symNext = SYM_IDX[seq[i+1]];
+    for (let s = 0; s < STATES.length; s++) {
+      B[s][i] = logSumExp(STATES.map((_, t) => logA[s][t] + logE[t][symNext] + B[t][i+1]));
+      yield { phase: 'fill', matrix: 'B', i, s, value: B[s][i] };
+    }
+  }
+  const sym0 = SYM_IDX[seq[0]];
+  const logPx = logSumExp(STATES.map((_, s) => logPi[s] + logE[s][sym0] + B[s][0]));
+  yield { phase: 'done', logPx };
+}
+
+// Posterior decoding: run Forward, then Backward, then γ[s][i] = f·b / P(x).
+// Decoded path = per-column argmax of γ (no back-pointers — each position
+// is decoded independently, so the resulting path may have zero-probability
+// transitions; that's the well-known trade-off vs Viterbi).
+function* posteriorSteps(seq) {
+  const n = seq.length;
+  if (n === 0) { yield { phase: 'done', path: [] }; return; }
+  const F = STATES.map(() => new Array(n).fill(-Infinity));
+  const B = STATES.map(() => new Array(n).fill(-Infinity));
+
+  // Forward fill
+  for (let s = 0; s < STATES.length; s++) {
+    F[s][0] = logPi[s] + logE[s][SYM_IDX[seq[0]]];
+    yield { phase: 'fill', matrix: 'F', i: 0, s, value: F[s][0] };
+  }
+  for (let i = 1; i < n; i++) {
+    const sym = SYM_IDX[seq[i]];
+    for (let s = 0; s < STATES.length; s++) {
+      const lse = logSumExp(STATES.map((_, t) => F[t][i-1] + logA[t][s]));
+      F[s][i] = lse + logE[s][sym];
+      yield { phase: 'fill', matrix: 'F', i, s, value: F[s][i] };
+    }
+  }
+
+  // Backward fill
+  for (let s = 0; s < STATES.length; s++) {
+    B[s][n-1] = 0;
+    yield { phase: 'fill', matrix: 'B', i: n-1, s, value: 0 };
+  }
+  for (let i = n - 2; i >= 0; i--) {
+    const symNext = SYM_IDX[seq[i+1]];
+    for (let s = 0; s < STATES.length; s++) {
+      B[s][i] = logSumExp(STATES.map((_, t) => logA[s][t] + logE[t][symNext] + B[t][i+1]));
+      yield { phase: 'fill', matrix: 'B', i, s, value: B[s][i] };
+    }
+  }
+
+  // γ[s][i] = exp(f[s][i] + b[s][i] - log P(x))
+  const logPx = logSumExp(STATES.map((_, s) => F[s][n-1]));
+  const G = STATES.map(() => new Array(n).fill(0));
+  for (let i = 0; i < n; i++) {
+    for (let s = 0; s < STATES.length; s++) {
+      G[s][i] = Math.exp(F[s][i] + B[s][i] - logPx);
+      yield { phase: 'fill', matrix: 'G', i, s, value: G[s][i], isProb: true };
+    }
+  }
+
+  // Per-column argmax of γ = posterior-decoded path
+  const path = new Array(n);
+  for (let i = 0; i < n; i++) {
+    let bestS = 0;
+    for (let s = 1; s < STATES.length; s++) if (G[s][i] > G[bestS][i]) bestS = s;
+    path[i] = bestS;
+    yield { phase: 'traceback', matrix: 'G', kind: 'decode-col', i, s: bestS, prob: G[bestS][i] };
+  }
+  yield { phase: 'done', path, logPx };
+}
+
+// Registry: each algorithm declares which trellises to render and which
+// step generator to use. The UI's #algo selector swaps these.
+const ALGORITHMS = {
+  viterbi: {
+    label: 'Viterbi',
+    matrices: [{ name: 'V', title: 'V[state][i] — max log-prob of any path ending in state s at position i' }],
+    steps: viterbiSteps,
+    decodes: true,
+    summary: 'most-likely STATE PATH (single argmax over all paths)',
+    recurrence:
+`V[s][0]  = log π[s] + log e[s][x₀]
+V[s][i]  = log e[s][xᵢ] + max_t (V[t][i-1] + log a[t][s])
+bp[s][i] = argmax_t  V[t][i-1] + log a[t][s]
+path: traceback from argmax_s V[s][n-1]`,
+  },
+  forward: {
+    label: 'Forward',
+    matrices: [{ name: 'F', title: 'f[state][i] — log P(x₁..xᵢ, state_i = s)' }],
+    steps: forwardSteps,
+    decodes: false,
+    summary: 'LIKELIHOOD log P(x) = logsumexp_s f[s][n-1]',
+    recurrence:
+`f[s][0] = log π[s] + log e[s][x₀]
+f[s][i] = log e[s][xᵢ]
+        + logsumexp_t (f[t][i-1] + log a[t][s])
+log P(x) = logsumexp_s f[s][n-1]`,
+  },
+  backward: {
+    label: 'Backward',
+    matrices: [{ name: 'B', title: 'b[state][i] — log P(xᵢ₊₁..xₙ | state_i = s)' }],
+    steps: backwardSteps,
+    decodes: false,
+    summary: 'COMPLEMENT to Forward; together they give the posterior γ',
+    recurrence:
+`b[s][n-1] = 0       (i.e. log 1)
+b[s][i]   = logsumexp_t (log a[s][t]
+                       + log e[t][xᵢ₊₁]
+                       + b[t][i+1])
+log P(x) = logsumexp_s (log π[s] + log e[s][x₀] + b[s][0])`,
+  },
+  posterior: {
+    label: 'Posterior',
+    matrices: [
+      { name: 'F', title: 'f — Forward' },
+      { name: 'B', title: 'b — Backward' },
+      { name: 'G', title: 'γ[state][i] = P(state_i = s | x) — posterior probability' },
+    ],
+    steps: posteriorSteps,
+    decodes: true,
+    summary: 'per-column argmax of γ (decoded INDEPENDENTLY at each position)',
+    recurrence:
+`run Forward and Backward, then:
+γ[s][i] = exp(f[s][i] + b[s][i] − log P(x))
+path[i] = argmax_s γ[s][i]
+(note: this path may have impossible transitions
+ — that's the cost of independent per-position decoding)`,
+  },
+};
 
 // ============================================================================
 // 3. Rendering
@@ -350,51 +540,58 @@ function* viterbiSteps(seq) {
 
 const $ = sel => document.querySelector(sel);
 
-function buildTrellis(seq) {
+function buildTrellises(seq, matrices) {
   const host = $('#trellis-host');
   host.innerHTML = '';
-  const tbl = document.createElement('table');
-  tbl.className = 'trellis';
-
-  const thead = document.createElement('thead');
-  // index row
-  let hr = document.createElement('tr');
-  hr.appendChild(document.createElement('th'));
-  for (let i = 0; i < seq.length; i++) {
-    const th = document.createElement('th');
-    th.textContent = i;
-    hr.appendChild(th);
-  }
-  thead.appendChild(hr);
-  // symbol row
-  hr = document.createElement('tr');
-  hr.appendChild(document.createElement('th'));
-  for (const ch of seq) {
-    const th = document.createElement('th'); th.className = 'symbol';
-    th.textContent = ch; hr.appendChild(th);
-  }
-  thead.appendChild(hr);
-  tbl.appendChild(thead);
-
-  const tbody = document.createElement('tbody');
-  for (let s = 0; s < STATES.length; s++) {
-    const tr = document.createElement('tr');
-    const lh = document.createElement('th');
-    lh.textContent = STATES[s];
-    lh.style.background = s === 0 ? 'var(--bg-state)' : 'var(--island-state)';
-    lh.style.color = 'var(--ink)';
-    tr.appendChild(lh);
-    for (let i = 0; i < seq.length; i++) {
-      const td = document.createElement('td');
-      td.id = `c-${s}-${i}`;
-      td.className = 'empty';
-      td.innerHTML = '<span class="v">·</span>';
-      tr.appendChild(td);
+  for (const spec of matrices) {
+    const wrap = document.createElement('div');
+    wrap.className = 'trellis-wrap';
+    if (matrices.length > 1) {
+      const cap = document.createElement('div');
+      cap.className = 'trellis-caption';
+      cap.textContent = spec.title;
+      wrap.appendChild(cap);
     }
-    tbody.appendChild(tr);
+    const tbl = document.createElement('table');
+    tbl.className = 'trellis';
+
+    const thead = document.createElement('thead');
+    let hr = document.createElement('tr');
+    hr.appendChild(document.createElement('th'));
+    for (let i = 0; i < seq.length; i++) {
+      const th = document.createElement('th'); th.textContent = i; hr.appendChild(th);
+    }
+    thead.appendChild(hr);
+    hr = document.createElement('tr');
+    hr.appendChild(document.createElement('th'));
+    for (const ch of seq) {
+      const th = document.createElement('th'); th.className = 'symbol';
+      th.textContent = ch; hr.appendChild(th);
+    }
+    thead.appendChild(hr);
+    tbl.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    for (let s = 0; s < STATES.length; s++) {
+      const tr = document.createElement('tr');
+      const lh = document.createElement('th');
+      lh.textContent = STATES[s];
+      lh.style.background = s === 0 ? 'var(--bg-state)' : 'var(--island-state)';
+      lh.style.color = 'var(--ink)';
+      tr.appendChild(lh);
+      for (let i = 0; i < seq.length; i++) {
+        const td = document.createElement('td');
+        td.id = `c-${spec.name}-${s}-${i}`;
+        td.className = 'empty';
+        td.innerHTML = '<span class="v">·</span>';
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    tbl.appendChild(tbody);
+    wrap.appendChild(tbl);
+    host.appendChild(wrap);
   }
-  tbl.appendChild(tbody);
-  host.appendChild(tbl);
 }
 
 function buildDecoded(seq) {
@@ -424,35 +621,47 @@ function buildDecoded(seq) {
   host.appendChild(pathRow);
 }
 
-function paintCell(s, i, value, bp, range) {
-  const td = document.getElementById(`c-${s}-${i}`);
+function paintCell(matrix, s, i, value, bp, range, isProb) {
+  const td = document.getElementById(`c-${matrix}-${s}-${i}`);
   if (!td) return;
   td.classList.remove('empty');
   td.classList.add('filled');
   td.classList.add(`state-${STATES[s]}`);
 
-  const display = value === -Infinity ? '−∞' : value.toFixed(2);
-  const arrow = bp === -1 ? '·' : (bp === 0 ? '←' : '↖');
-  td.innerHTML = `<span class="v">${display}</span><span class="bp">${arrow}</span>`;
+  let display;
+  if (isProb) {
+    // γ in [0,1] — show as 2-dp probability
+    display = value.toFixed(2);
+  } else if (value === -Infinity) {
+    display = '−∞';
+  } else if (value === 0 && matrix === 'B') {
+    display = '0.00';
+  } else {
+    display = value.toFixed(2);
+  }
+  const arrow = (bp === undefined || bp === -1) ? '' : (bp === 0 ? '←' : '↖');
+  td.innerHTML = `<span class="v">${display}</span>${arrow ? `<span class="bp">${arrow}</span>` : ''}`;
 
-  // Heatmap: more "good" (closer to max log-prob) → more saturated.
-  // log-probs are <= 0; max ≈ 0 (best), min ≈ -∞ (worst).
-  if (value > -Infinity && range.max > -Infinity) {
+  // Heatmap normalisation
+  if (isProb) {
+    // probability already in [0,1]
+    td.style.setProperty('--t', value.toFixed(2));
+  } else if (value > -Infinity && range.max > -Infinity) {
     const span = range.max - range.min;
     const t = span > 0 ? Math.max(0, (value - range.min) / span) : 0;
     td.style.setProperty('--t', t.toFixed(2));
   }
 }
 
-function flashCell(s, i) {
-  const td = document.getElementById(`c-${s}-${i}`);
+function flashCell(matrix, s, i) {
+  const td = document.getElementById(`c-${matrix}-${s}-${i}`);
   if (!td) return;
   document.querySelectorAll('td.current').forEach(e => e.classList.remove('current'));
   td.classList.add('current');
 }
 
-function markPath(s, i) {
-  const td = document.getElementById(`c-${s}-${i}`);
+function markPath(matrix, s, i) {
+  const td = document.getElementById(`c-${matrix}-${s}-${i}`);
   if (td) td.classList.add('path');
   const ch = document.getElementById(`p-${i}`);
   if (ch) {
@@ -485,59 +694,83 @@ function reset() {
     setStatus('invalid sequence (use A/C/G/T)');
     return;
   }
-  // truncate to keep the trellis readable; warn if user wanted longer
   if (seq.length > 60) {
     setStatus(`sequence trimmed to first 60 nt (was ${seq.length})`);
     seq = seq.slice(0, 60);
     $('#seq').value = seq;
   }
+  const algoKey = $('#algo').value;
+  const algo = ALGORITHMS[algoKey];
   const steps = [];
-  for (const s of viterbiSteps(seq)) steps.push(s);
+  for (const s of algo.steps(seq)) steps.push(s);
+
+  // Per-matrix log-prob range for heatmap normalisation
+  const ranges = {};
+  for (const m of algo.matrices) ranges[m.name] = { min: 0, max: -Infinity };
 
   state = {
-    seq,
+    seq, algoKey, algo,
     steps,
     cursor: -1,
-    range: { min: 0, max: -Infinity },   // grows as cells are computed
+    ranges,
   };
 
-  buildTrellis(seq);
+  // Update the trellis-panel title + decoded-panel title to match the algo
+  $('#trellis-title').innerHTML = `${algo.label} ${algo.matrices.length > 1 ? 'trellises' : 'trellis'} &nbsp; <span class="small">${algo.matrices[0].title}${algo.matrices.length > 1 ? ' (and ' + (algo.matrices.length - 1) + ' more below)' : ''}</span>`;
+  $('#decoded-title').innerHTML = algo.decodes
+    ? `Decoded path &nbsp; <span class="small">${algo.summary}</span>`
+    : `Output &nbsp; <span class="small">${algo.summary}</span>`;
+  $('#recurrence').textContent = algo.recurrence;
+
+  buildTrellises(seq, algo.matrices);
   buildDecoded(seq);
-  setStatus(`ready — ${seq.length} nt, ${steps.length} total steps`);
+  setStatus(`ready — ${algo.label} on ${seq.length} nt, ${steps.length} total steps`);
   updateButtons();
 }
 
 function applyStepInc(step) {
   if (step.phase === 'fill') {
-    if (step.value > -Infinity) {
-      if (step.value > state.range.max) state.range.max = step.value;
-      if (step.value < state.range.min) state.range.min = step.value;
+    const range = state.ranges[step.matrix];
+    if (!step.isProb && step.value > -Infinity && range) {
+      if (step.value > range.max) range.max = step.value;
+      if (step.value < range.min) range.min = step.value;
     }
-    paintCell(step.s, step.i, step.value, step.bp, state.range);
-    flashCell(step.s, step.i);
-    setStatus(`fill V[${STATES[step.s]}][${step.i}] = ${step.value === -Infinity ? '−∞' : step.value.toFixed(2)}`);
+    paintCell(step.matrix, step.s, step.i, step.value, step.bp, range, !!step.isProb);
+    flashCell(step.matrix, step.s, step.i);
+    const v = step.isProb ? step.value.toFixed(3)
+            : step.value === -Infinity ? '−∞' : step.value.toFixed(2);
+    setStatus(`fill ${step.matrix}[${STATES[step.s]}][${step.i}] = ${v}`);
     return;
   }
   if (step.phase === 'traceback') {
     if (step.kind === 'argmax') {
-      markPath(step.s, step.i);
+      markPath(step.matrix, step.s, step.i);
       setStatus(`traceback start — argmax at i=${step.i} → state ${STATES[step.s]}`);
-    } else {
-      markPath(step.s, step.i);
+    } else if (step.kind === 'follow') {
+      markPath(step.matrix, step.s, step.i);
       setStatus(`traceback follow ↖/← to i=${step.i} → state ${STATES[step.s]}`);
+    } else if (step.kind === 'decode-col') {
+      markPath(step.matrix, step.s, step.i);
+      setStatus(`posterior decode column ${step.i}: argmax γ = state ${STATES[step.s]} with γ = ${step.prob.toFixed(3)}`);
     }
     return;
   }
   if (step.phase === 'done') {
-    const path = step.path.map(s => STATES[s]).join('');
-    setStatus(`done — Viterbi path: ${path}`);
+    if (step.path) {
+      const pathStr = step.path.map(s => STATES[s]).join('');
+      setStatus(`done — ${state.algo.label} path: ${pathStr}`);
+    } else if (step.logPx !== undefined) {
+      setStatus(`done — log P(x) = ${step.logPx.toFixed(3)}  (P(x) ≈ ${Math.exp(step.logPx).toExponential(3)})`);
+    } else {
+      setStatus('done');
+    }
   }
 }
 
 function rebuildUpTo(idx) {
-  buildTrellis(state.seq);
+  buildTrellises(state.seq, state.algo.matrices);
   buildDecoded(state.seq);
-  state.range = { min: 0, max: -Infinity };
+  for (const m of state.algo.matrices) state.ranges[m.name] = { min: 0, max: -Infinity };
   for (let i = 0; i <= idx; i++) applyStepInc(state.steps[i]);
   if (idx < 0) setStatus(`reset — 0 of ${state.steps.length} steps applied`);
 }
@@ -628,6 +861,7 @@ function applyPreset(idx) {
 }
 
 populatePresets(1);
+$('#algo').addEventListener('change', reset);
 $('#preset').addEventListener('change', () => applyPreset($('#preset').value));
 $('#seq').addEventListener('change', () => { $('#preset').value = 'custom'; reset(); });
 $('#reset').addEventListener('click', rewindAll);
@@ -644,6 +878,7 @@ document.addEventListener('keydown', e => {
 
 const params = new URLSearchParams(location.search);
 if (params.has('speed')) $('#speed').value = params.get('speed');
+if (params.has('algo'))  $('#algo').value = params.get('algo');
 if (params.has('seq')) {
   $('#seq').value = params.get('seq');
   $('#preset').value = 'custom';
