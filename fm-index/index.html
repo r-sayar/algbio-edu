@@ -123,6 +123,9 @@
   table.kv th { background: #f1f5f9; color: var(--muted); font-weight: 600; }
   table.kv td.used  { background: var(--flash); font-weight: 700; outline: 2px solid var(--orange); outline-offset: -2px; }
   table.kv td.used2 { background: #fef9c3; }
+  table.kv td.unfilled { color: transparent; background: #f8fafc; }
+  table.kv td.fresh    { background: var(--pair-soft); color: var(--pair); font-weight: 700; outline: 2px solid var(--pair); outline-offset: -2px; }
+  table.kv th.current-lk { outline: 2px solid var(--orange); outline-offset: -2px; }
 
   /* status / explanation strip */
   #explain {
@@ -364,7 +367,43 @@ function* bwtSteps(data) {
       explain: `L[${i}] = "${data.bwt.charAt(i - 1)}" — last character of the sorted cyclic shift in row ${i}`,
     };
   }
-  yield { phase: 'done', bwt: data.bwt, explain: `BWT = ${data.bwt}` };
+
+  // Phase 4: build C array (alphabet sweep over character counts in L)
+  yield {
+    phase: 'C-start',
+    pseudoLine: 'p4',
+    explain: `Build C(c) = number of characters in T (equivalently in L) that are alphabetically smaller than c. Sweep the alphabet in order.`,
+  };
+  let cum = 0;
+  for (const c of data.alphabet) {
+    const n_c = data.n_c[c];
+    yield {
+      phase: 'C-fill', char: c, value: cum, n_c, cumNext: cum + n_c,
+      pseudoLine: 'p4',
+      explain: `C("${c}") = ${cum}   (n_${c} = ${n_c}; next cumulative = ${cum + n_c})`,
+    };
+    cum += n_c;
+  }
+
+  // Phase 5: build Occ table by scanning L left-to-right.
+  // Only the row matching L[k] increments at column k; everyone else copies forward.
+  yield {
+    phase: 'Occ-start',
+    pseudoLine: 'p5',
+    explain: `Build Occ(c, k) = number of c's in L[1..k]. Scan L left-to-right; only the row matching L[k] increments at column k, everyone else copies the previous column.`,
+  };
+  for (let k = 1; k <= data.n; k++) {
+    const lk = data.bwt.charAt(k - 1);
+    const counts = {};
+    for (const c of data.alphabet) counts[c] = data.Occ[c][k];
+    yield {
+      phase: 'Occ-col', k, lk, counts,
+      pseudoLine: 'p5',
+      explain: `column k = ${k}: L[${k}] = "${lk}". Occ("${lk}", ${k}) = Occ("${lk}", ${k-1}) + 1 = ${data.Occ[lk][k]}.  All other Occ(c, ${k}) = Occ(c, ${k-1}).`,
+    };
+  }
+
+  yield { phase: 'done', bwt: data.bwt, explain: `BWT, C array, and Occ table fully constructed. BWT = ${data.bwt}` };
 }
 
 // Reverse transform: walk LF mapping from row 1.
@@ -528,6 +567,8 @@ const ALGORITHMS = {
       { id: 'p1', text: '1. Form conceptual matrix M whose rows are the n cyclic shifts of T' },
       { id: 'p2', text: '2. Sort the rows of M lexicographically' },
       { id: 'p3', text: '3. T^bwt = last column L of the sorted M' },
+      { id: 'p4', text: '4. C(c) = Σ_{c\' < c} n_{c\'}     // alphabet sweep over char counts' },
+      { id: 'p5', text: '5. Occ(c, k) = Occ(c, k-1) + [L[k] = c]   // left-to-right scan of L' },
     ],
     realWorld: [
       { repo: 'lh3/bwa',                       note: 'BWA — uses the BWT to index reference genomes for short-read mapping; the original FM-Index aligner.' },
@@ -695,39 +736,65 @@ function setMarked(rows, posBy) {
   }
 }
 
-// C and Occ table builders
-function buildCTable(data) {
+// C and Occ table builders.
+// When opts.unfilled is true (BWT construction mode), the value cells start
+// as transparent placeholders; reveal*() functions fill them in step by step.
+function buildCTable(data, opts = {}) {
   const tbl = $('#c-table');
   tbl.innerHTML = '';
   const hr = document.createElement('tr');
   const tr = document.createElement('tr');
   hr.innerHTML = '<th>c</th>' + data.alphabet.map(c => `<th>${c}</th>`).join('');
-  tr.innerHTML = '<th>C(c)</th>' + data.alphabet.map(c => `<td id="c-${c.charCodeAt(0)}">${data.C[c]}</td>`).join('');
+  tr.innerHTML = '<th>C(c)</th>' + data.alphabet.map(c =>
+    `<td id="c-${c.charCodeAt(0)}"${opts.unfilled ? ' class="unfilled"' : ''}>${data.C[c]}</td>`
+  ).join('');
   tbl.appendChild(hr); tbl.appendChild(tr);
 }
 
-function buildOccTable(data) {
+function buildOccTable(data, opts = {}) {
   const tbl = $('#occ-table');
   tbl.innerHTML = '';
-  // Header: i | 1 .. n
+  // Header: k\c | 0 1 .. n
   const hr = document.createElement('tr');
   hr.innerHTML = '<th>k\\c</th>' + Array.from({length: data.n + 1}, (_, k) => `<th>${k}</th>`).join('');
   tbl.appendChild(hr);
-  // Add an L[k] header row for context
+  // L[k] header row (k=0 cell is empty)
   const lr = document.createElement('tr');
   lr.innerHTML = '<th style="background:#fef9c3">L[k]</th>' +
     '<th></th>' +
-    Array.from({length: data.n}, (_, idx) => `<th style="background:#fef9c3">${data.bwt[idx]}</th>`).join('');
+    Array.from({length: data.n}, (_, idx) =>
+      `<th id="occL-${idx + 1}" style="background:#fef9c3">${data.bwt[idx]}</th>`
+    ).join('');
   tbl.appendChild(lr);
+  // Per-character rows. k=0 is always 0 (boundary); k>=1 starts unfilled if requested.
   for (const c of data.alphabet) {
     const tr = document.createElement('tr');
     let html = `<th>${c}</th>`;
     for (let k = 0; k <= data.n; k++) {
-      html += `<td id="occ-${c.charCodeAt(0)}-${k}">${data.Occ[c][k]}</td>`;
+      const cls = (opts.unfilled && k >= 1) ? ' class="unfilled"' : '';
+      html += `<td id="occ-${c.charCodeAt(0)}-${k}"${cls}>${data.Occ[c][k]}</td>`;
     }
     tr.innerHTML = html;
     tbl.appendChild(tr);
   }
+}
+
+function revealCCell(c) {
+  const td = document.getElementById(`c-${c.charCodeAt(0)}`);
+  if (!td) return;
+  td.classList.remove('unfilled');
+  td.classList.add('fresh');
+}
+
+function revealOccColumn(k, lk, data) {
+  for (const ch of data.alphabet) {
+    const td = document.getElementById(`occ-${ch.charCodeAt(0)}-${k}`);
+    if (!td) continue;
+    td.classList.remove('unfilled');
+    if (ch === lk) td.classList.add('fresh');
+  }
+  const lkh = document.getElementById(`occL-${k}`);
+  if (lkh) lkh.classList.add('current-lk');
 }
 
 function highlightC(c) {
@@ -741,9 +808,10 @@ function highlightOcc(c, k) {
   if (td) td.classList.add('used');
 }
 function clearKvHighlights() {
-  document.querySelectorAll('.kv td.used, .kv td.used2').forEach(td => {
-    td.classList.remove('used', 'used2');
+  document.querySelectorAll('.kv td.used, .kv td.used2, .kv td.fresh').forEach(td => {
+    td.classList.remove('used', 'used2', 'fresh');
   });
+  document.querySelectorAll('.kv th.current-lk').forEach(th => th.classList.remove('current-lk'));
 }
 
 // Pseudocode rendering
@@ -967,8 +1035,12 @@ function reset() {
   }[algoKey];
 
   buildMatrix(data);
-  buildCTable(data);
-  buildOccTable(data);
+  // For BWT construction only, the C and Occ tables start empty and are
+  // filled in by the algorithm's later phases. Other algorithms consume
+  // them as already-built prerequisites.
+  const unfilled = (algoKey === 'bwt');
+  buildCTable(data, { unfilled });
+  buildOccTable(data, { unfilled });
   if (algo.showUnsortedPane) buildShiftsPane(data);
   renderPseudocode(algo.pseudocode);
   renderRealWorld(algo.realWorld);
@@ -1013,6 +1085,26 @@ function applyStepInc(step) {
     state.bwtSoFar = step.bwtSoFar;
     renderBwtResult(state.bwtSoFar, data.n, step.row - 1);
     setStatus(`extract L[${step.row}] = "${step.ch}"`);
+    return;
+  }
+  if (step.phase === 'C-start') {
+    setStatus('build C array');
+    return;
+  }
+  if (step.phase === 'C-fill') {
+    revealCCell(step.char);
+    setStatus(`C("${step.char}") = ${step.value}`);
+    return;
+  }
+  if (step.phase === 'Occ-start') {
+    setStatus('build Occ table');
+    return;
+  }
+  if (step.phase === 'Occ-col') {
+    revealOccColumn(step.k, step.lk, data);
+    // also highlight the L cell in the F/L matrix for clarity
+    flashL(step.k);
+    setStatus(`Occ column ${step.k}: L[${step.k}] = "${step.lk}"`);
     return;
   }
 
@@ -1141,6 +1233,10 @@ function rebuildUpTo(idx) {
   // Reset visuals
   if (state.algo.showUnsortedPane) buildShiftsPane(state.data);
   buildMatrix(state.data);
+  // Rebuild C and Occ in their initial state for the chosen algorithm
+  const unfilled = (state.algoKey === 'bwt');
+  buildCTable(state.data, { unfilled });
+  buildOccTable(state.data, { unfilled });
   clearKvHighlights();
   state.bwtSoFar = '';
   state.T = null;
