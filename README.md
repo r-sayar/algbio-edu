@@ -1,5 +1,7 @@
 # algbio-edu — interactive visualizers for algorithmic bioinformatics
 
+> **Want a new visualization?** [Open an issue](https://github.com/r-sayar/algbio-edu/issues/new) and describe the algorithm — contributions and requests are welcome.
+
 Single-page web demos for the central algorithms taught in an
 "Algorithmic Bioinformatics" course (FU Berlin ALBI, WS 2024 lectures
 by Hölzer / Backofen / Liebl). Each demo follows the same pattern:
