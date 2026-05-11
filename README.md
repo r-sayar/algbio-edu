@@ -19,6 +19,7 @@ This is a sister repo to [**rna-folding-edu**](https://github.com/r-sayar/rna-fo
 |---|---|---|
 | [`hmm/`](hmm/index.html)              | **Viterbi, Forward, Backward, Posterior** on a 2-state CpG-island HMM | [open](https://r-sayar.github.io/algbio-edu/hmm/) |
 | [`alignment/`](alignment/index.html)  | Needleman-Wunsch (global) and Smith-Waterman (local) | [open](https://r-sayar.github.io/algbio-edu/alignment/) |
+| [`fm-index/`](fm-index/index.html)    | **FM Index**: BWT construction, reverse transform, backward search, locate matches | [open](https://r-sayar.github.io/algbio-edu/fm-index/) |
 | [`evoformer/`](evoformer/index.html)  | 3-D voxel walk through one Evoformer block (AlphaFold) | [open](https://r-sayar.github.io/algbio-edu/evoformer/) |
 | [`structure-scores/`](structure-scores/index.html) | GDT-TS / TM-score / lDDT — sliders + intuition | [open](https://r-sayar.github.io/algbio-edu/structure-scores/) |
 | [`phylo/`](phylo/)                    | Neighbor-Joining + UPGMA + Fitch + Sankoff (Python + step-by-step PNG figures) | [browse](phylo/) |
@@ -61,6 +62,32 @@ For the default preset `ATATATATCGCGCGCGATATATAT`:
 
 ![HMM Viterbi screenshot](hmm/preview.png)
 ![HMM Posterior screenshot](hmm/preview-posterior.png)
+
+### FM Index — `fm-index/`
+
+Four algorithms that share the same sorted-cyclic-shifts (F/L) matrix:
+
+1. **BWT construction** — show the cyclic shifts of `T = mississippi$` being
+   added (unsorted pane), the sort, then the last column extracted row by row
+   into the BWT string `ipssm$pissii`.
+2. **Reverse transform** (BWT⁻¹) — walk the L-to-F mapping `LF(i) = C(L[i]) + Occ(L[i], i)`
+   from row 1, extracting one character of the original text at each step
+   until `mississippi$` is reconstructed.
+3. **Backward search (count)** — Ferragina-Manzini's right-to-left pattern
+   match. Maintains an interval `[a..b]` of matching rows; shrinks it by
+   `a' = C(c) + Occ(c, a-1) + 1`, `b' = C(c) + Occ(c, b)` for each new
+   pattern character. The default preset `P = ssi` ends with interval `[11..12]`
+   → 2 occurrences.
+4. **Locate matches** — given the search interval, walk LF from each row
+   until you hit a *marked* row (a sampled SA entry) and read the position.
+   Recovers the text positions (3 and 6) without storing the full suffix array.
+
+![FM Index — backward search](fm-index/preview-search.png)
+
+The right sidebar always shows the **C array** and the **Occ table** with
+the currently-consulted cells highlighted in orange. The active line of the
+pseudocode lights up yellow. The bottom yellow strip spells out the
+arithmetic for the current step.
 
 ### Pairwise alignment — `alignment/`
 

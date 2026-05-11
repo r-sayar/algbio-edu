@@ -1,0 +1,1245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FM Index visualizer — BWT, reverse transform, backward search, locate</title>
+<style>
+  :root {
+    --bg: #fafafa;
+    --panel: #ffffff;
+    --ink: #1f2933;
+    --muted: #5d6b7a;
+    --grid: #e2e8f0;
+    --accent: #2563eb;
+    --accent-soft: #dbeafe;
+    --pair: #16a34a;
+    --pair-soft: #dcfce7;
+    --flash: #fde68a;
+    --orange: #f97316;
+    --orange-soft: #fed7aa;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink); background: var(--bg);
+  }
+  header { padding: 16px 20px; border-bottom: 1px solid var(--grid); background: var(--panel); }
+  header h1 { margin: 0 0 4px 0; font-size: 18px; }
+  header p  { margin: 0; color: var(--muted); font-size: 13px; }
+  header a  { color: var(--accent); }
+
+  #controls {
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    padding: 12px 20px; background: var(--panel);
+    border-bottom: 1px solid var(--grid);
+  }
+  #controls label { font-size: 13px; color: var(--muted); }
+  #controls select, #controls input[type=text], #controls input[type=number], #controls button {
+    font: inherit; padding: 6px 10px;
+    border: 1px solid var(--grid); border-radius: 6px;
+    background: white; color: var(--ink);
+  }
+  #controls input[type=text] {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  #controls input[type=number] { width: 56px; }
+  #controls button { cursor: pointer; }
+  #controls button.primary { background: var(--accent); color: white; border-color: var(--accent); }
+  #controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #status {
+    margin-left: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px; color: var(--muted);
+  }
+  .hidden { display: none !important; }
+
+  main {
+    display: grid;
+    grid-template-columns: minmax(560px, 2fr) minmax(340px, 1fr);
+    gap: 16px;
+    padding: 16px 20px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--grid);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .panel h2 {
+    margin: 0 0 8px 0; font-size: 13px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .panel h2 .small { font-weight: 400; color: #94a3b8; text-transform: none; }
+  #panel-matrix { grid-column: 1; grid-row: 1; }
+  #panel-result { grid-column: 1; grid-row: 2; }
+  #panel-side   { grid-column: 2; grid-row: 1 / span 2; }
+
+  /* F/L matrix */
+  table.flmatrix {
+    border-collapse: collapse;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+  }
+  table.flmatrix th, table.flmatrix td {
+    padding: 3px 6px;
+    border: 1px solid transparent;
+    text-align: center;
+  }
+  table.flmatrix th { color: var(--muted); font-weight: 600; font-size: 11px; }
+  table.flmatrix td.idx  { color: var(--muted); font-size: 11px; min-width: 22px; }
+  table.flmatrix td.f    { font-weight: 700; color: var(--ink); min-width: 18px; background: #f1f5f9; border-color: var(--grid); }
+  table.flmatrix td.mid  { color: #cbd5e1; letter-spacing: 0.3em; padding-left: 4px; padding-right: 4px; }
+  table.flmatrix td.l    { font-weight: 700; color: var(--ink); min-width: 18px; background: #f1f5f9; border-color: var(--grid); }
+  table.flmatrix tr.in-interval td.f,
+  table.flmatrix tr.in-interval td.mid,
+  table.flmatrix tr.in-interval td.l,
+  table.flmatrix tr.in-interval td.idx,
+  table.flmatrix tr.in-interval td.mark { background: var(--orange-soft); }
+  table.flmatrix tr.current td { outline: 2px solid var(--accent); outline-offset: -1px; }
+  table.flmatrix td.f.hit  { background: var(--pair); color: white; }
+  table.flmatrix td.l.hit  { background: var(--pair); color: white; }
+  table.flmatrix td.f.flash, table.flmatrix td.l.flash { background: var(--flash); }
+  table.flmatrix td.f.pattern-match { background: var(--accent); color: white; }
+  table.flmatrix td.l.pattern-match { background: var(--accent); color: white; }
+  table.flmatrix td.mark {
+    color: var(--muted); font-size: 10px; min-width: 22px;
+    font-variant-numeric: tabular-nums;
+  }
+  table.flmatrix td.mark.marked { color: var(--orange); font-weight: 700; }
+  table.flmatrix tr.faded td { opacity: 0.25; }
+
+  /* side: C and Occ tables */
+  .sub-block { margin-bottom: 14px; }
+  .sub-block h3 { margin: 0 0 6px 0; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  table.kv {
+    border-collapse: collapse;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+  }
+  table.kv th, table.kv td {
+    padding: 3px 7px; border: 1px solid var(--grid);
+    text-align: center; min-width: 22px;
+  }
+  table.kv th { background: #f1f5f9; color: var(--muted); font-weight: 600; }
+  table.kv td.used  { background: var(--flash); font-weight: 700; outline: 2px solid var(--orange); outline-offset: -2px; }
+  table.kv td.used2 { background: #fef9c3; }
+
+  /* status / explanation strip */
+  #explain {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    color: var(--ink);
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin-top: 8px;
+    white-space: pre-wrap;
+    min-height: 14px;
+  }
+  #explain.empty { background: #f8fafc; border-color: var(--grid); color: var(--muted); }
+
+  /* pseudocode */
+  pre.recurrence {
+    font-size: 11px; background: #f8fafc; padding: 8px;
+    border-radius: 4px; margin: 0; color: var(--ink); white-space: pre-wrap;
+  }
+  pre.recurrence .pcline { display: block; padding: 1px 4px; border-radius: 3px; }
+  pre.recurrence .pcline.active { background: var(--flash); font-weight: 600; }
+
+  /* result strips */
+  .result-row {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 14px; line-height: 1.4; white-space: pre;
+    overflow-x: auto;
+  }
+  .result-row .ch {
+    display: inline-block; width: 16px; text-align: center;
+    line-height: 22px; height: 22px; border-radius: 3px;
+  }
+  .result-row .label { color: var(--muted); margin-right: 6px; font-size: 12px; }
+  .result-row .ch.fixed   { color: var(--ink); }
+  .result-row .ch.pending { color: #cbd5e1; }
+  .result-row .ch.fresh   { background: var(--pair); color: white; }
+  .result-row .ch.active  { background: var(--flash); color: var(--ink); font-weight: 700; }
+
+  /* unsorted shifts (BWT phase 1) */
+  #unsorted-pane { margin-bottom: 10px; }
+  #unsorted-pane h3 { margin: 0 0 4px 0; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  table.shifts {
+    border-collapse: collapse;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+  }
+  table.shifts td { padding: 1px 4px; }
+  table.shifts td.idx { color: var(--muted); font-size: 10px; padding-right: 8px; }
+  table.shifts td.shift { color: var(--ink); }
+  table.shifts tr.ghost td { color: #cbd5e1; }
+  table.shifts tr.added td.shift { background: var(--pair-soft); color: var(--pair); font-weight: 600; }
+
+  /* real-world */
+  .realworld { margin: 0; padding: 0; list-style: none; font-size: 12px; }
+  .realworld li { margin: 6px 0; }
+  .realworld a { color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+  .realworld .note { color: var(--muted); display: block; margin-top: 2px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>FM Index visualizer — BWT, reverse transform, backward search, locate</h1>
+  <p>
+    Step through the four algorithms that together form the
+    <a href="https://en.wikipedia.org/wiki/FM-index">FM Index</a> — the compressed
+    text-search data structure used by short-read aligners like BWA and Bowtie2.
+    All four share the same F/L matrix (the sorted cyclic shifts of the text + the
+    BWT in the last column). Switch algorithms with the dropdown.
+  </p>
+</header>
+
+<div id="controls">
+  <label>Algorithm:
+    <select id="algo">
+      <option value="bwt" selected>BWT construction</option>
+      <option value="reverse">Reverse transform (BWT⁻¹)</option>
+      <option value="search">Backward search (count)</option>
+      <option value="locate">Locate matches</option>
+    </select>
+  </label>
+  <label>Text:
+    <input type="text" id="text" value="mississippi" autocomplete="off" size="20">
+    <span style="font-size:11px;color:var(--muted)">($ appended automatically)</span>
+  </label>
+  <label id="lbl-pattern" class="hidden">Pattern:
+    <input type="text" id="pattern" value="ssi" autocomplete="off" size="10">
+  </label>
+  <label id="lbl-sample" class="hidden">Sample every:
+    <input type="number" id="sample" value="4" min="1" max="20">
+  </label>
+  <button id="reset" title="rewind to before any step">Reset</button>
+  <button id="back"  title="undo last step (←)">◀ Back</button>
+  <button id="play" class="primary" title="play / pause (space)">Play</button>
+  <button id="step"  title="advance one step (→)">Next ▶</button>
+  <label>Speed:
+    <select id="speed">
+      <option value="700">slow</option>
+      <option value="250" selected>medium</option>
+      <option value="60">fast</option>
+      <option value="2">turbo</option>
+    </select>
+  </label>
+  <span id="status">idle</span>
+</div>
+
+<main>
+  <section id="panel-matrix" class="panel">
+    <h2 id="matrix-title">F/L matrix</h2>
+    <div id="unsorted-pane" class="hidden">
+      <h3>Cyclic shifts being constructed (unsorted)</h3>
+      <div id="shifts-host"></div>
+    </div>
+    <div id="matrix-host"></div>
+    <div id="explain" class="empty">step through to see the per-cell computation</div>
+  </section>
+
+  <section id="panel-result" class="panel">
+    <h2 id="result-title">Result</h2>
+    <div id="result-host" class="result-row"></div>
+  </section>
+
+  <section id="panel-side" class="panel">
+    <div class="sub-block">
+      <h3>C array <span style="color:#94a3b8;text-transform:none;font-weight:400">— C(c) = number of chars in T smaller than c</span></h3>
+      <table class="kv" id="c-table"></table>
+    </div>
+    <div class="sub-block">
+      <h3>Occ table <span style="color:#94a3b8;text-transform:none;font-weight:400">— Occ(c, k) = #c in L[1..k]</span></h3>
+      <div style="max-height: 200px; overflow: auto">
+        <table class="kv" id="occ-table"></table>
+      </div>
+    </div>
+    <div class="sub-block">
+      <h3>Pseudocode</h3>
+      <pre id="recurrence" class="recurrence"></pre>
+    </div>
+    <div class="sub-block">
+      <h3>Used in the wild</h3>
+      <ul class="realworld" id="realworld"></ul>
+    </div>
+  </section>
+</main>
+
+<script>
+// ============================================================================
+// 1. Data structures: BWT, suffix array, C, Occ
+// ============================================================================
+
+const TERMINATOR = '$';
+
+function buildFMData(rawText) {
+  // Append terminator if not present
+  let text = rawText.endsWith(TERMINATOR) ? rawText : (rawText + TERMINATOR);
+  const n = text.length;
+
+  // Suffix array via simple sort (fine for short demo strings)
+  const sa = Array.from({length: n}, (_, i) => i);
+  sa.sort((a, b) => {
+    for (let k = 0; k < n; k++) {
+      const ca = text.charAt((a + k) % n);
+      const cb = text.charAt((b + k) % n);
+      if (ca !== cb) return ca < cb ? -1 : 1;
+    }
+    return 0;
+  });
+
+  // BWT (L column): L[i] (1-indexed) = text[(sa[i-1] - 1 + n) % n]
+  const bwt = sa.map(s => text.charAt((s - 1 + n) % n)).join('');
+  // F column: sorted characters of text
+  const f = [...text].sort().join('');
+  // Alphabet
+  const alphabet = [...new Set(text)].sort();
+  // C(c) = total occurrences of characters alphabetically smaller than c
+  const C = {};
+  let cum = 0;
+  for (const ch of alphabet) {
+    C[ch] = cum;
+    cum += [...text].filter(c => c === ch).length;
+  }
+  // n_c = total occurrences of c in T
+  const n_c = {};
+  for (const ch of alphabet) {
+    n_c[ch] = [...text].filter(c => c === ch).length;
+  }
+  // Occ[c][k] = # of c in L[1..k] for k in 0..n  (so Occ[c][0]=0, Occ[c][n]=total)
+  const Occ = {};
+  for (const ch of alphabet) Occ[ch] = new Array(n + 1).fill(0);
+  for (let i = 1; i <= n; i++) {
+    for (const ch of alphabet) {
+      Occ[ch][i] = Occ[ch][i-1] + (bwt[i-1] === ch ? 1 : 0);
+    }
+  }
+  // Cyclic shifts (for BWT-construction unsorted view)
+  const shifts = [];
+  for (let i = 0; i < n; i++) shifts.push(text.slice(i) + text.slice(0, i));
+  // sortedShiftSrc[i] = the original index of the shift at sorted position i (0-indexed)
+  // sa[i] gives the starting position in text; shift = shifts[sa[i]]
+  return { text, n, sa, bwt, f, alphabet, C, Occ, n_c, shifts };
+}
+
+// LF(i) computed lazily — 1-indexed in/out
+function LF(data, i) {
+  const c = data.bwt.charAt(i - 1);
+  return data.C[c] + data.Occ[c][i];
+}
+
+// ============================================================================
+// 2. Step generators — one per algorithm
+// ============================================================================
+
+// BWT construction. The matrix is shown in its eventual sorted state, but
+// we walk a separate "unsorted shifts" pane while phase === 'shift-add'.
+function* bwtSteps(data) {
+  const n = data.n;
+  // Phase 1: add cyclic shifts one by one (to the unsorted pane)
+  for (let i = 0; i < n; i++) {
+    yield {
+      phase: 'shift-add', i: i + 1, shift: data.shifts[i],
+      pseudoLine: 'p1',
+      explain: `cyclic shift T^(${i+1}) = ${data.shifts[i]}`,
+    };
+  }
+  // Phase 2: sort
+  yield {
+    phase: 'sort',
+    pseudoLine: 'p2',
+    explain: `Sort the ${n} cyclic shifts lexicographically. The terminator $ is the smallest character, so $-rows come first.`,
+  };
+  // Phase 3: extract L column row-by-row
+  let bwt = '';
+  for (let i = 1; i <= n; i++) {
+    bwt += data.bwt.charAt(i - 1);
+    yield {
+      phase: 'extract-L', row: i, ch: data.bwt.charAt(i - 1), bwtSoFar: bwt,
+      pseudoLine: 'p3',
+      explain: `L[${i}] = "${data.bwt.charAt(i - 1)}" — last character of the sorted cyclic shift in row ${i}`,
+    };
+  }
+  yield { phase: 'done', bwt: data.bwt, explain: `BWT = ${data.bwt}` };
+}
+
+// Reverse transform: walk LF mapping from row 1.
+function* reverseSteps(data) {
+  const n = data.n;
+  let i = 1, j = n;
+  // Initialise T[n] = $
+  const T = new Array(n).fill(null);
+  T[n - 1] = TERMINATOR;
+  yield {
+    phase: 'reverse-init', T: [...T], current: i, j,
+    pseudoLine: 'init',
+    explain: `Initialise: T[${n}] = $, start at row i = 1 (the row beginning with $).`,
+  };
+  while (j > 1) {
+    j = j - 1;
+    const ch = data.bwt.charAt(i - 1);
+    T[j - 1] = ch;
+    yield {
+      phase: 'reverse-extract', T: [...T], current: i, j, ch,
+      pseudoLine: 'extract',
+      explain: `Extract T[${j}] = L[${i}] = "${ch}"`,
+    };
+    const c = ch;
+    const c_val = data.C[c];
+    const occ_val = data.Occ[c][i];
+    const next_i = c_val + occ_val;
+    yield {
+      phase: 'reverse-lf', T: [...T], from: i, to: next_i, c, c_val, occ_val,
+      pseudoLine: 'lf',
+      explain: `LF(${i}) = C(${c}) + Occ(${c}, ${i}) = ${c_val} + ${occ_val} = ${next_i}`,
+    };
+    i = next_i;
+  }
+  yield { phase: 'done', T: [...T], explain: `Reconstructed: ${T.join('')}` };
+}
+
+// Backward search (count). Maintains interval [a..b]; consumes pattern right-to-left.
+function* searchSteps(data, pattern) {
+  const n = data.n;
+  let a = 1, b = n, i = pattern.length;
+  yield {
+    phase: 'search-init', a, b, i, pattern,
+    pseudoLine: 'init',
+    explain: `Initialise: interval [a..b] = [1..${n}] (every row matches the empty suffix), i = m = ${pattern.length}.`,
+  };
+  while (a <= b && i >= 1) {
+    const c = pattern.charAt(i - 1);
+    if (!(c in data.C)) {
+      yield {
+        phase: 'search-empty', a, b, i, pattern, missingChar: c,
+        pseudoLine: 'shrink',
+        explain: `P[${i}] = "${c}" is not in the text alphabet → no occurrences.`,
+      };
+      yield { phase: 'done', count: 0, a: 0, b: -1, pattern, explain: `Pattern "${pattern}" not found (alphabet mismatch).` };
+      return;
+    }
+    const c_val = data.C[c];
+    const occ_a_minus_1 = data.Occ[c][a - 1];
+    const occ_b = data.Occ[c][b];
+    const new_a = c_val + occ_a_minus_1 + 1;
+    const new_b = c_val + occ_b;
+    yield {
+      phase: 'search-shrink', a, b, new_a, new_b, i, c, c_val, occ_a_minus_1, occ_b, pattern,
+      pseudoLine: 'shrink',
+      explain:
+`P[${i}] = "${c}".  New interval:
+  a' = C("${c}") + Occ("${c}", ${a-1}) + 1 = ${c_val} + ${occ_a_minus_1} + 1 = ${new_a}
+  b' = C("${c}") + Occ("${c}", ${b})     = ${c_val} + ${occ_b}             = ${new_b}`,
+    };
+    a = new_a; b = new_b; i = i - 1;
+  }
+  if (b < a) {
+    yield { phase: 'done', count: 0, a, b, pattern, explain: `Pattern "${pattern}" not found in text.` };
+  } else {
+    yield {
+      phase: 'done', count: b - a + 1, a, b, pattern,
+      explain: `Pattern "${pattern}" found: interval [${a}..${b}], ${b - a + 1} occurrence(s).`,
+    };
+  }
+}
+
+// Locate matches.  Assumes backward search has yielded an interval [a..b].
+// For each row in the interval, walk LF until we reach a "marked" row whose
+// text position pos(i) is stored directly.  text-position = pos(marked) + v.
+function* locateSteps(data, pattern, sampleEvery) {
+  // First, run backward search internally to get the interval
+  // (we don't yield those steps — they're the previous "search" algo's job)
+  const n = data.n;
+  let a = 1, b = n, i = pattern.length;
+  while (a <= b && i >= 1) {
+    const c = pattern.charAt(i - 1);
+    if (!(c in data.C)) { a = 1; b = 0; break; }
+    a = data.C[c] + data.Occ[c][a - 1] + 1;
+    b = data.C[c] + data.Occ[c][b];
+    i--;
+  }
+  if (b < a) {
+    yield { phase: 'no-occurrences', a, b, pattern, explain: `Pattern "${pattern}" not in text — nothing to locate.` };
+    yield { phase: 'done', positions: [], pattern, explain: 'No occurrences to locate.' };
+    return;
+  }
+
+  // Build sampled SA: pos(i) is stored for row i iff sa[i-1] % sampleEvery === 0
+  // (equivalently: every sampleEvery-th text position is marked)
+  const marked = new Set();
+  for (let row = 1; row <= n; row++) {
+    const textPos = data.sa[row - 1];     // 0-indexed text position
+    if (textPos % sampleEvery === 0) marked.add(row);
+  }
+
+  yield {
+    phase: 'locate-setup', a, b, pattern, marked: [...marked].sort((x,y)=>x-y),
+    pseudoLine: 'setup',
+    explain: `Pattern interval [${a}..${b}] from backward search. Marked rows (every ${sampleEvery}-th text position): {${[...marked].sort((x,y)=>x-y).join(', ')}}.`,
+  };
+
+  const positions = [];
+  for (let row = a; row <= b; row++) {
+    yield {
+      phase: 'locate-row-start', row, a, b,
+      pseudoLine: 'row-start',
+      explain: `Locating row ${row}…`,
+    };
+    let cur = row, v = 0;
+    while (!marked.has(cur)) {
+      const c = data.bwt.charAt(cur - 1);
+      const c_val = data.C[c];
+      const occ_val = data.Occ[c][cur];
+      const next = c_val + occ_val;
+      yield {
+        phase: 'locate-walk', startRow: row, current: cur, next, v: v + 1, c, c_val, occ_val, marked: false, a, b,
+        pseudoLine: 'walk',
+        explain: `row ${cur} not marked → LF(${cur}) = C("${c}") + Occ("${c}", ${cur}) = ${c_val} + ${occ_val} = ${next}  (v = ${v + 1})`,
+      };
+      cur = next; v = v + 1;
+    }
+    const pos_marked = data.sa[cur - 1] + 1;   // convert to 1-indexed
+    const final_pos = pos_marked + v;
+    positions.push({ row, pos: final_pos });
+    yield {
+      phase: 'locate-found', startRow: row, markedRow: cur, v, posMarked: pos_marked, finalPos: final_pos, a, b,
+      pseudoLine: 'found',
+      explain: `row ${cur} is marked with pos = ${pos_marked}. Final position of original row ${row} is pos(${cur}) + v = ${pos_marked} + ${v} = ${final_pos}.`,
+    };
+  }
+  yield { phase: 'done', positions, pattern, explain: `Found ${positions.length} occurrence(s) at positions: ${positions.map(p => p.pos).join(', ')}.` };
+}
+
+// ============================================================================
+// 3. Algorithm registry
+// ============================================================================
+
+const ALGORITHMS = {
+  bwt: {
+    label: 'BWT construction',
+    needsPattern: false,
+    needsSample: false,
+    showUnsortedPane: true,
+    pseudocode: [
+      { id: 'p1', text: '1. Form conceptual matrix M whose rows are the n cyclic shifts of T' },
+      { id: 'p2', text: '2. Sort the rows of M lexicographically' },
+      { id: 'p3', text: '3. T^bwt = last column L of the sorted M' },
+    ],
+    realWorld: [
+      { repo: 'lh3/bwa',                       note: 'BWA — uses the BWT to index reference genomes for short-read mapping; the original FM-Index aligner.' },
+      { repo: 'BenLangmead/bowtie2',           note: 'Bowtie 2 — successor to Bowtie; FM-Index-based read aligner.' },
+      { repo: 'simongog/sdsl-lite',            note: 'Succinct Data Structure Library — clean C++ reference BWT/FM-Index implementations.' },
+      { repo: 'y-256/libdivsufsort',           note: 'Fast suffix-array construction — the SA is the standard building block for the BWT.' },
+    ],
+  },
+  reverse: {
+    label: 'Reverse transform (BWT⁻¹)',
+    needsPattern: false,
+    needsSample: false,
+    showUnsortedPane: false,
+    pseudocode: [
+      { id: 'init',    text: 'i = 1, j = n; T[n] = $' },
+      { id: 'extract', text: 'while (j > 1)' },
+      { id: 'extract', text: '    j = j − 1' },
+      { id: 'extract', text: '    T[j] = L[i]' },
+      { id: 'lf',      text: '    i = C(L[i]) + Occ(L[i], i)        // = LF(i)' },
+      { id: 'lf',      text: 'od; return T' },
+    ],
+    realWorld: [
+      { repo: 'lh3/bwa',                       note: 'BWA never inverts the BWT — it queries it. But the LF-mapping it relies on is exactly this reverse-transform step.' },
+      { repo: 'simongog/sdsl-lite',            note: 'sdsl::bwt::extract() reconstructs substrings of T from the BWT using LF.' },
+      { repo: 'kortschak/utr',                 note: 'Pure-Go BWT compressor/decompressor — direct port of the Burrows-Wheeler 1994 reverse transform.' },
+    ],
+  },
+  search: {
+    label: 'Backward search (count)',
+    needsPattern: true,
+    needsSample: false,
+    showUnsortedPane: false,
+    pseudocode: [
+      { id: 'init',   text: 'i = m, a = 1, b = n' },
+      { id: 'shrink', text: 'while (a ≤ b) ∧ (i ≥ 1)' },
+      { id: 'shrink', text: '    c = P[i]' },
+      { id: 'shrink', text: '    a = C(c) + Occ(c, a − 1) + 1' },
+      { id: 'shrink', text: '    b = C(c) + Occ(c, b)' },
+      { id: 'shrink', text: '    i = i − 1' },
+      { id: 'done',   text: 'return (b < a) ? "not found" : "(b − a + 1) occurrences"' },
+    ],
+    realWorld: [
+      { repo: 'lh3/bwa',                       note: 'bwa aln uses exactly this backward-search recurrence (with mismatch backtracking) to seed alignments.' },
+      { repo: 'BenLangmead/bowtie2',           note: 'Bowtie 2 — backward search on a BWT-index built from the reference genome.' },
+      { repo: 'COMBINE-lab/salmon',            note: 'salmon — RNA-seq quasi-mapping uses backward search on a transcriptome FM-Index.' },
+      { repo: 'lh3/minimap2',                  note: 'Long-read aligner; uses an FM-Index variant for seed lookup in its splice-aware mode.' },
+    ],
+  },
+  locate: {
+    label: 'Locate matches',
+    needsPattern: true,
+    needsSample: true,
+    showUnsortedPane: false,
+    pseudocode: [
+      { id: 'setup',     text: '// run backward search → interval [a..b]' },
+      { id: 'row-start', text: 'for each row i in [a..b]:' },
+      { id: 'walk',      text: '    i\' = i; v = 0' },
+      { id: 'walk',      text: '    while row i\' is not marked:' },
+      { id: 'walk',      text: '        c = L[i\']' },
+      { id: 'walk',      text: '        i\' = C(c) + Occ(c, i\')      // = LF(i\')' },
+      { id: 'walk',      text: '        v = v + 1' },
+      { id: 'found',     text: '    pos(i) = pos(i\') + v' },
+    ],
+    realWorld: [
+      { repo: 'lh3/bwa',                       note: 'bwa stores a sampled SA (default rate 8) and uses the LF-walk trick described here to recover full text positions.' },
+      { repo: 'BenLangmead/bowtie2',           note: 'Bowtie 2 — same sampled-SA + LF-walk for locating alignments.' },
+      { repo: 'seqan/seqan3',                  note: 'SeqAn 3 — generic C++ FM-Index with configurable SA sampling.' },
+      { repo: 'simongog/sdsl-lite',            note: 'sdsl::csa_wt — compressed suffix array with sparse SA samples.' },
+    ],
+  },
+};
+
+// ============================================================================
+// 4. Rendering
+// ============================================================================
+
+const $ = sel => document.querySelector(sel);
+
+function buildMatrix(data) {
+  const host = $('#matrix-host');
+  host.innerHTML = '';
+  const tbl = document.createElement('table');
+  tbl.className = 'flmatrix';
+  const hr = document.createElement('tr');
+  hr.innerHTML = `<th></th><th>F</th><th></th><th>L</th><th class="mark-col"></th>`;
+  tbl.appendChild(hr);
+
+  for (let row = 1; row <= data.n; row++) {
+    const tr = document.createElement('tr');
+    tr.id = `row-${row}`;
+    const fch = data.text.charAt(data.sa[row - 1]);
+    const lch = data.bwt.charAt(row - 1);
+    // middle = the cyclic shift's chars between F and L
+    const start = data.sa[row - 1];
+    const middle = [];
+    for (let k = 1; k < data.n - 1; k++) {
+      middle.push(data.text.charAt((start + k) % data.n));
+    }
+    tr.innerHTML =
+      `<td class="idx">${row}</td>` +
+      `<td class="f" id="f-${row}">${fch}</td>` +
+      `<td class="mid">${middle.join('')}</td>` +
+      `<td class="l" id="l-${row}">${lch}</td>` +
+      `<td class="mark" id="mark-${row}"></td>`;
+    tbl.appendChild(tr);
+  }
+  host.appendChild(tbl);
+}
+
+function clearMatrixHighlights() {
+  document.querySelectorAll('table.flmatrix tr').forEach(tr => {
+    tr.classList.remove('in-interval', 'current', 'faded');
+  });
+  document.querySelectorAll('table.flmatrix td.f, table.flmatrix td.l').forEach(td => {
+    td.classList.remove('hit', 'flash', 'pattern-match');
+  });
+  document.querySelectorAll('table.flmatrix td.mark').forEach(td => {
+    td.classList.remove('marked');
+    td.textContent = '';
+  });
+}
+
+function setInterval_(a, b) {
+  for (let r = 1; r <= state.data.n; r++) {
+    const tr = document.getElementById(`row-${r}`);
+    if (!tr) continue;
+    if (r >= a && r <= b) tr.classList.add('in-interval');
+    else                  tr.classList.remove('in-interval');
+  }
+}
+
+function setCurrentRow(row) {
+  document.querySelectorAll('table.flmatrix tr.current').forEach(e => e.classList.remove('current'));
+  if (row) {
+    const tr = document.getElementById(`row-${row}`);
+    if (tr) tr.classList.add('current');
+  }
+}
+
+function flashF(row) {
+  const td = document.getElementById(`f-${row}`);
+  if (td) td.classList.add('flash');
+}
+function flashL(row) {
+  const td = document.getElementById(`l-${row}`);
+  if (td) td.classList.add('flash');
+}
+function hitL(row) {
+  const td = document.getElementById(`l-${row}`);
+  if (td) td.classList.add('hit');
+}
+function patternMatchF(row) {
+  const td = document.getElementById(`f-${row}`);
+  if (td) td.classList.add('pattern-match');
+}
+
+function setMarked(rows, posBy) {
+  // posBy: map row→pos(row) for marked rows
+  for (const row of rows) {
+    const td = document.getElementById(`mark-${row}`);
+    if (td) {
+      td.classList.add('marked');
+      td.textContent = String(posBy[row] !== undefined ? posBy[row] : '✓');
+    }
+  }
+}
+
+// C and Occ table builders
+function buildCTable(data) {
+  const tbl = $('#c-table');
+  tbl.innerHTML = '';
+  const hr = document.createElement('tr');
+  const tr = document.createElement('tr');
+  hr.innerHTML = '<th>c</th>' + data.alphabet.map(c => `<th>${c}</th>`).join('');
+  tr.innerHTML = '<th>C(c)</th>' + data.alphabet.map(c => `<td id="c-${c.charCodeAt(0)}">${data.C[c]}</td>`).join('');
+  tbl.appendChild(hr); tbl.appendChild(tr);
+}
+
+function buildOccTable(data) {
+  const tbl = $('#occ-table');
+  tbl.innerHTML = '';
+  // Header: i | 1 .. n
+  const hr = document.createElement('tr');
+  hr.innerHTML = '<th>k\\c</th>' + Array.from({length: data.n + 1}, (_, k) => `<th>${k}</th>`).join('');
+  tbl.appendChild(hr);
+  // Add an L[k] header row for context
+  const lr = document.createElement('tr');
+  lr.innerHTML = '<th style="background:#fef9c3">L[k]</th>' +
+    '<th></th>' +
+    Array.from({length: data.n}, (_, idx) => `<th style="background:#fef9c3">${data.bwt[idx]}</th>`).join('');
+  tbl.appendChild(lr);
+  for (const c of data.alphabet) {
+    const tr = document.createElement('tr');
+    let html = `<th>${c}</th>`;
+    for (let k = 0; k <= data.n; k++) {
+      html += `<td id="occ-${c.charCodeAt(0)}-${k}">${data.Occ[c][k]}</td>`;
+    }
+    tr.innerHTML = html;
+    tbl.appendChild(tr);
+  }
+}
+
+function highlightC(c) {
+  if (c === undefined) return;
+  const td = document.getElementById(`c-${c.charCodeAt(0)}`);
+  if (td) td.classList.add('used');
+}
+function highlightOcc(c, k) {
+  if (c === undefined) return;
+  const td = document.getElementById(`occ-${c.charCodeAt(0)}-${k}`);
+  if (td) td.classList.add('used');
+}
+function clearKvHighlights() {
+  document.querySelectorAll('.kv td.used, .kv td.used2').forEach(td => {
+    td.classList.remove('used', 'used2');
+  });
+}
+
+// Pseudocode rendering
+function renderPseudocode(pseudocode) {
+  const pre = $('#recurrence'); pre.innerHTML = '';
+  for (const line of pseudocode) {
+    const span = document.createElement('span');
+    span.className = 'pcline';
+    span.dataset.line = line.id;
+    span.textContent = line.text;
+    pre.appendChild(span);
+  }
+}
+function highlightPseudoLine(id) {
+  document.querySelectorAll('pre#recurrence .pcline.active').forEach(e => e.classList.remove('active'));
+  if (!id) return;
+  document.querySelectorAll(`pre#recurrence .pcline[data-line="${id}"]`).forEach(e => e.classList.add('active'));
+}
+
+function renderRealWorld(list) {
+  const ul = $('#realworld'); ul.innerHTML = '';
+  for (const r of list) {
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.href = `https://github.com/${r.repo}`;
+    a.target = '_blank'; a.rel = 'noopener';
+    a.textContent = r.repo;
+    li.appendChild(a);
+    const note = document.createElement('span'); note.className = 'note'; note.textContent = r.note;
+    li.appendChild(note);
+    ul.appendChild(li);
+  }
+}
+
+function setExplain(text) {
+  const div = $('#explain');
+  if (!text) { div.textContent = 'step through to see the per-cell computation'; div.classList.add('empty'); }
+  else       { div.textContent = text; div.classList.remove('empty'); }
+}
+function setStatus(msg) { $('#status').textContent = msg; }
+
+// ============================================================================
+// 5. BWT-construction-specific: the "unsorted shifts" pane
+// ============================================================================
+
+function buildShiftsPane(data) {
+  const host = $('#shifts-host');
+  host.innerHTML = '';
+  const tbl = document.createElement('table');
+  tbl.className = 'shifts';
+  for (let i = 0; i < data.n; i++) {
+    const tr = document.createElement('tr');
+    tr.className = 'ghost';
+    tr.id = `shift-${i + 1}`;
+    tr.innerHTML = `<td class="idx">T^(${i + 1}) =</td><td class="shift">${data.shifts[i]}</td>`;
+    tbl.appendChild(tr);
+  }
+  host.appendChild(tbl);
+}
+function addShift(i) {
+  const tr = document.getElementById(`shift-${i}`);
+  if (tr) { tr.classList.remove('ghost'); tr.classList.add('added'); }
+}
+function clearShifts() {
+  document.querySelectorAll('#shifts-host tr').forEach(tr => {
+    tr.classList.remove('added'); tr.classList.add('ghost');
+  });
+}
+
+// ============================================================================
+// 6. Result-row renderers
+// ============================================================================
+
+function renderBwtResult(bwt, n, freshIdx) {
+  const host = $('#result-host'); host.innerHTML = '';
+  const row = document.createElement('div');
+  row.innerHTML = `<span class="label">BWT =</span>`;
+  for (let i = 0; i < n; i++) {
+    const c = document.createElement('span');
+    c.className = 'ch';
+    if (i < bwt.length) {
+      c.textContent = bwt[i];
+      c.classList.add(i === freshIdx ? 'fresh' : 'fixed');
+    } else {
+      c.textContent = '·';
+      c.classList.add('pending');
+    }
+    row.appendChild(c);
+  }
+  host.appendChild(row);
+}
+
+function renderReverseResult(T, freshIdx) {
+  const host = $('#result-host'); host.innerHTML = '';
+  const row = document.createElement('div');
+  row.innerHTML = `<span class="label">T =</span>`;
+  for (let i = 0; i < T.length; i++) {
+    const c = document.createElement('span');
+    c.className = 'ch';
+    if (T[i] !== null) {
+      c.textContent = T[i];
+      c.classList.add(i === freshIdx ? 'fresh' : 'fixed');
+    } else {
+      c.textContent = '·';
+      c.classList.add('pending');
+    }
+    row.appendChild(c);
+  }
+  host.appendChild(row);
+}
+
+function renderSearchResult(pattern, i_active, count, found) {
+  const host = $('#result-host'); host.innerHTML = '';
+  const row = document.createElement('div');
+  row.innerHTML = `<span class="label">P =</span>`;
+  for (let i = 0; i < pattern.length; i++) {
+    const c = document.createElement('span');
+    c.className = 'ch';
+    c.textContent = pattern[i];
+    if (i + 1 < i_active)          c.classList.add('pending');     // not yet consumed (right of cursor)
+    else if (i + 1 === i_active)   c.classList.add('active');      // current char being consumed
+    else                            c.classList.add('fixed');       // already consumed (left)
+    row.appendChild(c);
+  }
+  if (count !== undefined) {
+    const span = document.createElement('span');
+    span.style.marginLeft = '12px';
+    span.style.color = count > 0 ? 'var(--pair)' : '#b91c1c';
+    span.style.fontWeight = '600';
+    span.textContent = ` →  ${count} occurrence${count === 1 ? '' : 's'}`;
+    row.appendChild(span);
+  }
+  host.appendChild(row);
+}
+
+function renderLocateResult(positions, totalN, pattern, currentRow) {
+  const host = $('#result-host'); host.innerHTML = '';
+  const row = document.createElement('div');
+  row.innerHTML = `<span class="label">positions =</span>`;
+  if (positions.length === 0) {
+    const span = document.createElement('span');
+    span.style.color = 'var(--muted)'; span.textContent = '(none yet)';
+    row.appendChild(span);
+  } else {
+    row.appendChild(document.createTextNode(' '));
+    positions.forEach((p, idx) => {
+      const span = document.createElement('span');
+      span.textContent = `row ${p.row} → pos ${p.pos}`;
+      span.style.background = 'var(--pair-soft)'; span.style.color = 'var(--pair)';
+      span.style.padding = '1px 6px'; span.style.borderRadius = '4px';
+      span.style.marginRight = '6px';
+      row.appendChild(span);
+    });
+  }
+  host.appendChild(row);
+  // Also show pattern positions in the text if any positions known
+  if (positions.length > 0) {
+    const text = state.data.text;
+    const div = document.createElement('div');
+    div.style.marginTop = '8px';
+    div.innerHTML = `<span class="label">T =</span>`;
+    for (let i = 0; i < text.length; i++) {
+      const c = document.createElement('span');
+      c.className = 'ch';
+      c.textContent = text[i];
+      const matchAt = positions.some(p => i + 1 >= p.pos && i + 1 < p.pos + pattern.length);
+      if (matchAt) { c.classList.add('fresh'); }
+      else         { c.classList.add('fixed'); }
+      div.appendChild(c);
+    }
+    host.appendChild(div);
+  }
+}
+
+// ============================================================================
+// 7. Step driver — cursor model, Back replays from scratch
+// ============================================================================
+
+let state = null;
+
+function reset() {
+  pausePlay();
+  const rawText = $('#text').value.trim();
+  if (!rawText) { setStatus('enter a non-empty text'); return; }
+  const data = buildFMData(rawText);
+  const algoKey = $('#algo').value;
+  const algo = ALGORITHMS[algoKey];
+  // Show/hide pattern + sample inputs
+  $('#lbl-pattern').classList.toggle('hidden', !algo.needsPattern);
+  $('#lbl-sample').classList.toggle('hidden', !algo.needsSample);
+  $('#unsorted-pane').classList.toggle('hidden', !algo.showUnsortedPane);
+
+  const pattern = $('#pattern').value.trim();
+  const sample = Math.max(1, parseInt($('#sample').value, 10) || 4);
+
+  let gen;
+  if (algoKey === 'bwt')      gen = bwtSteps(data);
+  else if (algoKey === 'reverse') gen = reverseSteps(data);
+  else if (algoKey === 'search')  gen = searchSteps(data, pattern);
+  else                            gen = locateSteps(data, pattern, sample);
+
+  const steps = []; for (const s of gen) steps.push(s);
+
+  state = {
+    data, algoKey, algo, pattern, sample,
+    steps, cursor: -1,
+    bwtSoFar: '',
+    T: null,
+    positions: [],
+    intervalA: 1, intervalB: data.n,
+    currentRow: null,
+  };
+
+  // Build static parts
+  $('#matrix-title').textContent = `${algo.label} — F/L matrix (sorted cyclic shifts of "${data.text}")`;
+  $('#result-title').textContent = {
+    bwt: 'BWT result',
+    reverse: 'Reconstructed text',
+    search: 'Pattern + count',
+    locate: 'Matched positions',
+  }[algoKey];
+
+  buildMatrix(data);
+  buildCTable(data);
+  buildOccTable(data);
+  if (algo.showUnsortedPane) buildShiftsPane(data);
+  renderPseudocode(algo.pseudocode);
+  renderRealWorld(algo.realWorld);
+
+  // initial result strip
+  if (algoKey === 'bwt')     renderBwtResult('', data.n, -1);
+  else if (algoKey === 'reverse') renderReverseResult(new Array(data.n).fill(null), -1);
+  else if (algoKey === 'search')  renderSearchResult(pattern, pattern.length + 1);
+  else                            renderLocateResult([], data.n, pattern);
+
+  setExplain(null);
+  clearKvHighlights();
+  clearMatrixHighlights();
+  highlightPseudoLine(null);
+
+  setStatus(`ready — ${algo.label} on text "${data.text}" (${data.n} chars), ${steps.length} steps`);
+  updateButtons();
+}
+
+function applyStepInc(step) {
+  clearKvHighlights();
+  clearMatrixHighlights();
+  highlightPseudoLine(step.pseudoLine);
+  if (step.explain) setExplain(step.explain);
+
+  const data = state.data;
+
+  if (step.phase === 'shift-add') {
+    addShift(step.i);
+    setStatus(`add shift ${step.i}/${data.n}`);
+    return;
+  }
+  if (step.phase === 'sort') {
+    setStatus(`sort done — rows are now in lexicographic order; the last column is the BWT`);
+    // Fade the unsorted pane to indicate it's "consumed"
+    document.querySelectorAll('#shifts-host tr').forEach(tr => tr.style.opacity = '0.4');
+    return;
+  }
+  if (step.phase === 'extract-L') {
+    setCurrentRow(step.row);
+    flashL(step.row);
+    state.bwtSoFar = step.bwtSoFar;
+    renderBwtResult(state.bwtSoFar, data.n, step.row - 1);
+    setStatus(`extract L[${step.row}] = "${step.ch}"`);
+    return;
+  }
+
+  if (step.phase === 'reverse-init') {
+    state.T = step.T;
+    setCurrentRow(step.current);
+    flashF(step.current);
+    renderReverseResult(state.T, data.n - 1);
+    setStatus(`initialise T[${data.n}] = $`);
+    return;
+  }
+  if (step.phase === 'reverse-extract') {
+    state.T = step.T;
+    setCurrentRow(step.current);
+    flashL(step.current);
+    renderReverseResult(state.T, step.j - 1);
+    setStatus(`T[${step.j}] = L[${step.current}] = "${step.ch}"`);
+    return;
+  }
+  if (step.phase === 'reverse-lf') {
+    state.T = step.T;
+    setCurrentRow(step.to);
+    flashL(step.from);
+    flashF(step.to);
+    highlightC(step.c);
+    highlightOcc(step.c, step.from);
+    setStatus(`LF(${step.from}) = ${step.to}`);
+    return;
+  }
+
+  if (step.phase === 'search-init') {
+    state.intervalA = step.a; state.intervalB = step.b;
+    setInterval_(step.a, step.b);
+    renderSearchResult(step.pattern, step.i);
+    setStatus(`initial interval [${step.a}..${step.b}]`);
+    return;
+  }
+  if (step.phase === 'search-shrink') {
+    state.intervalA = step.new_a; state.intervalB = step.new_b;
+    setInterval_(step.new_a, step.new_b);
+    highlightC(step.c);
+    highlightOcc(step.c, step.a - 1);
+    highlightOcc(step.c, step.b);
+    renderSearchResult(step.pattern, step.i);
+    setStatus(`P[${step.i}] = "${step.c}" → interval ${step.new_a > step.new_b ? '∅' : `[${step.new_a}..${step.new_b}]`}`);
+    return;
+  }
+  if (step.phase === 'search-empty') {
+    setInterval_(0, -1);
+    renderSearchResult(step.pattern, step.i);
+    setStatus(`character "${step.missingChar}" not in alphabet`);
+    return;
+  }
+
+  if (step.phase === 'no-occurrences') {
+    setStatus(`no occurrences to locate`);
+    return;
+  }
+  if (step.phase === 'locate-setup') {
+    state.intervalA = step.a; state.intervalB = step.b;
+    setInterval_(step.a, step.b);
+    // Mark sampled rows
+    const marked = step.marked;
+    const posBy = {};
+    for (const row of marked) posBy[row] = data.sa[row - 1] + 1;     // 1-indexed
+    setMarked(marked, posBy);
+    setStatus(`interval [${step.a}..${step.b}] from backward search; ${marked.length} rows marked`);
+    return;
+  }
+  if (step.phase === 'locate-row-start') {
+    setInterval_(step.a, step.b);
+    setCurrentRow(step.row);
+    // re-mark
+    const marked = [...Array(data.n).keys()].map(k => k + 1).filter(r => data.sa[r - 1] % state.sample === 0);
+    const posBy = {}; for (const r of marked) posBy[r] = data.sa[r - 1] + 1;
+    setMarked(marked, posBy);
+    setStatus(`locating row ${step.row}`);
+    return;
+  }
+  if (step.phase === 'locate-walk') {
+    setInterval_(step.a, step.b);
+    setCurrentRow(step.next);
+    flashL(step.current);
+    flashF(step.next);
+    highlightC(step.c);
+    highlightOcc(step.c, step.current);
+    const marked = [...Array(data.n).keys()].map(k => k + 1).filter(r => data.sa[r - 1] % state.sample === 0);
+    const posBy = {}; for (const r of marked) posBy[r] = data.sa[r - 1] + 1;
+    setMarked(marked, posBy);
+    setStatus(`walk LF: ${step.current} → ${step.next}, v=${step.v}`);
+    return;
+  }
+  if (step.phase === 'locate-found') {
+    setInterval_(step.a, step.b);
+    setCurrentRow(step.markedRow);
+    const marked = [...Array(data.n).keys()].map(k => k + 1).filter(r => data.sa[r - 1] % state.sample === 0);
+    const posBy = {}; for (const r of marked) posBy[r] = data.sa[r - 1] + 1;
+    setMarked(marked, posBy);
+    state.positions.push({ row: step.startRow, pos: step.finalPos });
+    renderLocateResult(state.positions, data.n, state.pattern, step.startRow);
+    setStatus(`row ${step.startRow}: pos = ${step.finalPos}`);
+    return;
+  }
+
+  if (step.phase === 'done') {
+    if (step.bwt !== undefined)       renderBwtResult(step.bwt, data.n, -1);
+    if (step.T !== undefined)         renderReverseResult(step.T, -1);
+    if (step.pattern !== undefined && step.count !== undefined) {
+      renderSearchResult(step.pattern, 0, step.count, step.count > 0);
+      if (step.count > 0) setInterval_(step.a, step.b);  // keep the result interval visible
+    }
+    if (step.positions !== undefined) {
+      renderLocateResult(step.positions, data.n, state.pattern);
+      // keep the interval visible if there are positions
+      if (step.positions.length > 0) {
+        const rows = step.positions.map(p => p.row);
+        setInterval_(Math.min(...rows), Math.max(...rows));
+      }
+    }
+    setStatus(step.explain || 'done');
+    return;
+  }
+}
+
+function rebuildUpTo(idx) {
+  // Reset visuals
+  if (state.algo.showUnsortedPane) buildShiftsPane(state.data);
+  buildMatrix(state.data);
+  clearKvHighlights();
+  state.bwtSoFar = '';
+  state.T = null;
+  state.positions = [];
+  state.intervalA = 1;
+  state.intervalB = state.data.n;
+  // initial result strip
+  if (state.algoKey === 'bwt') renderBwtResult('', state.data.n, -1);
+  else if (state.algoKey === 'reverse') renderReverseResult(new Array(state.data.n).fill(null), -1);
+  else if (state.algoKey === 'search')  renderSearchResult(state.pattern, state.pattern.length + 1);
+  else                                  renderLocateResult([], state.data.n, state.pattern);
+  setExplain(null);
+  highlightPseudoLine(null);
+  for (let i = 0; i <= idx; i++) applyStepInc(state.steps[i]);
+  if (idx < 0) setStatus(`reset — 0 of ${state.steps.length} steps applied`);
+}
+
+function goForward() {
+  if (!state || state.cursor >= state.steps.length - 1) return false;
+  state.cursor++;
+  applyStepInc(state.steps[state.cursor]);
+  updateButtons();
+  return state.cursor < state.steps.length - 1;
+}
+function goBack() {
+  if (!state || state.cursor < 0) return;
+  pausePlay();
+  state.cursor--;
+  rebuildUpTo(state.cursor);
+  updateButtons();
+}
+function rewindAll() {
+  if (!state) return;
+  pausePlay();
+  state.cursor = -1;
+  rebuildUpTo(-1);
+  updateButtons();
+}
+function updateButtons() {
+  if (!state) return;
+  const atStart = state.cursor < 0;
+  const atEnd   = state.cursor >= state.steps.length - 1;
+  $('#back').disabled = atStart;
+  $('#step').disabled = atEnd;
+  $('#play').disabled = atEnd;
+  if (atEnd) pausePlay();
+}
+let playTimer = null;
+function play() {
+  if (!state) return;
+  if (playTimer) { pausePlay(); return; }
+  if (state.cursor >= state.steps.length - 1) return;
+  $('#play').textContent = 'Pause';
+  const tick = () => {
+    const speed = parseInt($('#speed').value, 10);
+    const more = goForward();
+    if (more) playTimer = setTimeout(tick, speed);
+    else pausePlay();
+  };
+  tick();
+}
+function pausePlay() {
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  $('#play').textContent = 'Play';
+}
+
+// ============================================================================
+// 8. Wiring
+// ============================================================================
+
+$('#algo').addEventListener('change', reset);
+$('#text').addEventListener('change', reset);
+$('#pattern').addEventListener('change', reset);
+$('#sample').addEventListener('change', reset);
+$('#reset').addEventListener('click', rewindAll);
+$('#back').addEventListener('click', goBack);
+$('#step').addEventListener('click', () => { pausePlay(); goForward(); });
+$('#play').addEventListener('click', play);
+
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input, select, textarea, button')) return;
+  if (e.key === 'ArrowLeft')       { e.preventDefault(); goBack(); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); pausePlay(); goForward(); }
+  else if (e.key === ' ')          { e.preventDefault(); play(); }
+});
+
+// URL params
+const params = new URLSearchParams(location.search);
+if (params.has('algo'))    $('#algo').value    = params.get('algo');
+if (params.has('text'))    $('#text').value    = params.get('text');
+if (params.has('pattern')) $('#pattern').value = params.get('pattern');
+if (params.has('sample'))  $('#sample').value  = params.get('sample');
+if (params.has('speed'))   $('#speed').value   = params.get('speed');
+reset();
+if (params.has('steps')) {
+  const n = parseInt(params.get('steps'), 10);
+  for (let i = 0; i < n; i++) goForward();
+}
+if (params.has('autoplay')) play();
+</script>
+</body>
+</html>
