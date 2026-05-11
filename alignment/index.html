@@ -148,6 +148,11 @@
   }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
   .legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; border: 1px solid var(--grid); }
+
+  .realworld { margin: 0; padding: 0; list-style: none; font-size: 12px; }
+  .realworld li { margin: 6px 0; }
+  .realworld a { color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+  .realworld .note { color: var(--muted); display: block; margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -252,6 +257,11 @@ stop when M = 0</pre>
         Same DP shape, different rules at the boundary and the traceback.
       </p>
     </div>
+
+    <div class="info-block">
+      <h3>Used in the wild</h3>
+      <ul class="realworld" id="realworld"></ul>
+    </div>
   </section>
 </main>
 
@@ -346,8 +356,26 @@ function* swSteps(A, B, match, mismatch, gap) {
 }
 
 const ALGORITHMS = {
-  nw: { label: 'Needleman-Wunsch (global)', steps: nwSteps },
-  sw: { label: 'Smith-Waterman (local)',    steps: swSteps },
+  nw: {
+    label: 'Needleman-Wunsch (global)',
+    steps: nwSteps,
+    realWorld: [
+      { repo: 'kimrutherford/EMBOSS',                          note: '"needle" — the canonical NW implementation, in production use since 2000s.' },
+      { repo: 'biopython/biopython',                           note: 'Bio.Align.PairwiseAligner(mode="global") — pure-Python NW.' },
+      { repo: 'jeffdaily/parasail',                            note: 'Vectorised NW (SSE2/AVX2) — orders-of-magnitude faster than scalar.' },
+      { repo: 'lh3/ksw2',                                      note: 'Banded NW used inside minimap2 / bwa for long-read alignment extensions.' },
+    ],
+  },
+  sw: {
+    label: 'Smith-Waterman (local)',
+    steps: swSteps,
+    realWorld: [
+      { repo: 'mengyao/Complete-Striped-Smith-Waterman-Library', note: 'SSW — striped SSE2 SW; the de-facto fast SW library.' },
+      { repo: 'jeffdaily/parasail',                              note: 'Vectorised SW alongside NW; SSE/AVX kernels.' },
+      { repo: 'lh3/ksw2',                                        note: 'Banded SW used by minimap2 for split-read mapping.' },
+      { repo: 'bbuchfink/diamond',                               note: 'DIAMOND — a BLAST-style protein aligner; uses banded SW extension after k-mer seeding.' },
+    ],
+  },
 };
 
 // ============================================================================
@@ -535,8 +563,28 @@ function reset() {
   buildMatrix(A, B);
   buildAlignment();
   buildScoringTable(match, mismatch, gap);
+  renderRealWorld(algo.realWorld || []);
   setStatus(`ready — ${A.length}×${B.length} matrix, ${steps.length} total steps`);
   updateButtons();
+}
+
+function renderRealWorld(list) {
+  const ul = $('#realworld');
+  if (!ul) return;
+  ul.innerHTML = '';
+  for (const r of list) {
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.href = `https://github.com/${r.repo}`;
+    a.target = '_blank'; a.rel = 'noopener';
+    a.textContent = r.repo;
+    li.appendChild(a);
+    const note = document.createElement('span');
+    note.className = 'note';
+    note.textContent = r.note;
+    li.appendChild(note);
+    ul.appendChild(li);
+  }
 }
 
 function applyStepInc(step) {

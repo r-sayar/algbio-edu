@@ -123,6 +123,36 @@
   table.params th { background: #f1f5f9; color: var(--muted); font-weight: 600; }
   table.params td.label-B { background: var(--bg-state); }
   table.params td.label-I { background: var(--island-state); }
+  table.params td.used    { background: var(--flash); font-weight: 700; outline: 2px solid #d97706; outline-offset: -2px; }
+  table.params td.used-secondary { background: #fef9c3; }
+
+  /* highlighted previous trellis cell (e.g. V[t][i-1] that contributed) */
+  table.trellis td.contributor { outline: 2px dashed #d97706; outline-offset: -2px; }
+
+  /* pseudocode line highlighting */
+  pre#recurrence .pcline           { display: block; padding: 1px 4px; border-radius: 3px; }
+  pre#recurrence .pcline.active    { background: var(--flash); font-weight: 600; }
+
+  /* computation strip below trellis */
+  #computation {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    color: var(--ink);
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin-top: 8px;
+    white-space: pre-wrap;
+    min-height: 14px;
+  }
+  #computation.empty { background: #f8fafc; border-color: var(--grid); color: var(--muted); }
+
+  /* real-world links */
+  .realworld { margin: 0; padding: 0; list-style: none; font-size: 12px; }
+  .realworld li { margin: 6px 0; }
+  .realworld a { color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+  .realworld .note { color: var(--muted); display: block; margin-top: 2px; }
 
   /* decoded path strip */
   #decoded {
@@ -210,11 +240,12 @@
       <span><i style="background: var(--flash)"></i>current cell</span>
       <span><i style="background: var(--pair)"></i>traceback path</span>
     </div>
+    <div id="computation" class="empty">step through to see the per-cell computation</div>
     <p style="font-size:12px;color:var(--muted);margin:8px 0 0 0">
-      Viterbi cells show a back-pointer arrow (← from B, ↖ from I) in the top-right.
-      Forward / Backward have no back-pointers (sum-product instead of max-product).
-      Cell value = log-probability (more negative = less likely), except in the γ
-      trellis (Posterior) where the value is the posterior probability in [0, 1].
+      <b>Highlighted in the parameter tables on the right:</b> which π / a / e values feed the
+      current cell. Viterbi uses one transition (the argmax winner); Forward and Backward
+      use all transitions out of / into the row.
+      The active line in the recurrence below the parameter tables is highlighted too.
     </p>
   </section>
 
@@ -230,7 +261,7 @@
       <h3>Initial probabilities π</h3>
       <table class="params">
         <thead><tr><th></th><th>B</th><th>I</th></tr></thead>
-        <tbody><tr><th>π</th><td>0.50</td><td>0.50</td></tr></tbody>
+        <tbody><tr><th>π</th><td id="pi-0">0.50</td><td id="pi-1">0.50</td></tr></tbody>
       </table>
     </div>
 
@@ -239,8 +270,8 @@
       <table class="params">
         <thead><tr><th>from \ to</th><th>B</th><th>I</th></tr></thead>
         <tbody>
-          <tr><td class="label-B">B</td><td>0.90</td><td>0.10</td></tr>
-          <tr><td class="label-I">I</td><td>0.20</td><td>0.80</td></tr>
+          <tr><td class="label-B">B</td><td id="a-0-0">0.90</td><td id="a-0-1">0.10</td></tr>
+          <tr><td class="label-I">I</td><td id="a-1-0">0.20</td><td id="a-1-1">0.80</td></tr>
         </tbody>
       </table>
     </div>
@@ -250,8 +281,8 @@
       <table class="params">
         <thead><tr><th>state</th><th>A</th><th>C</th><th>G</th><th>T</th></tr></thead>
         <tbody>
-          <tr><td class="label-B">B</td><td>0.40</td><td>0.10</td><td>0.10</td><td>0.40</td></tr>
-          <tr><td class="label-I">I</td><td>0.10</td><td>0.40</td><td>0.40</td><td>0.10</td></tr>
+          <tr><td class="label-B">B</td><td id="e-0-0">0.40</td><td id="e-0-1">0.10</td><td id="e-0-2">0.10</td><td id="e-0-3">0.40</td></tr>
+          <tr><td class="label-I">I</td><td id="e-1-0">0.10</td><td id="e-1-1">0.40</td><td id="e-1-2">0.40</td><td id="e-1-3">0.10</td></tr>
         </tbody>
       </table>
       <p style="font-size:11px;color:var(--muted);margin:4px 0 0 0">
@@ -263,6 +294,11 @@
     <div class="params-block">
       <h3>Recurrence</h3>
       <pre id="recurrence" style="font-size:11px;background:#f8fafc;padding:8px;border-radius:4px;margin:0;color:var(--ink);white-space:pre-wrap"></pre>
+    </div>
+
+    <div class="params-block">
+      <h3>Used in the wild</h3>
+      <ul class="realworld" id="realworld"></ul>
     </div>
   </section>
 </main>
@@ -336,7 +372,13 @@ function* viterbiSteps(seq) {
     const sym = SYM_IDX[seq[0]];
     V[s][0]  = (sym === undefined) ? -Infinity : logPi[s] + logE[s][sym];
     BP[s][0] = -1;
-    yield { phase: 'fill', matrix: 'V', i: 0, s, value: V[s][0], bp: -1 };
+    yield {
+      phase: 'fill', matrix: 'V', i: 0, s, value: V[s][0], bp: -1,
+      usedPi: s, usedE: { s, sym },
+      pseudoLine: 'init',
+      computation: `V[${STATES[s]}][0] = log π[${STATES[s]}] + log e_${STATES[s]}(${seq[0]}) `
+        + `= log(${PI[s]}) + log(${E[s][sym]}) = ${V[s][0].toFixed(3)}`,
+    };
   }
 
   // ---- columns 1..n-1: recursive (max-product in log space) ----
@@ -351,7 +393,20 @@ function* viterbiSteps(seq) {
       }
       V[s][i]  = (sym === undefined) ? -Infinity : bestVal + logE[s][sym];
       BP[s][i] = bestPrev;
-      yield { phase: 'fill', matrix: 'V', i, s, value: V[s][i], bp: bestPrev };
+      yield {
+        phase: 'fill', matrix: 'V', i, s, value: V[s][i], bp: bestPrev,
+        usedA: [{ from: bestPrev, to: s }],         // the chosen transition
+        usedAGhost: STATES.map((_, t) => t).filter(t => t !== bestPrev)
+                          .map(t => ({ from: t, to: s })),  // dimmed others
+        usedE: { s, sym },
+        prevCell: { matrix: 'V', s: bestPrev, i: i - 1 },
+        pseudoLine: 'recur',
+        computation: `V[${STATES[s]}][${i}] = log e_${STATES[s]}(${seq[i]}) `
+          + `+ max_t (V[t][${i-1}] + log a_t→${STATES[s]}) `
+          + `\n      chose t = ${STATES[bestPrev]}: `
+          + `log(${E[s][sym]}) + ${V[bestPrev][i-1].toFixed(3)} + log(${A[bestPrev][s]}) `
+          + `= ${V[s][i].toFixed(3)}`,
+      };
     }
   }
 
@@ -360,14 +415,22 @@ function* viterbiSteps(seq) {
   for (let s = 1; s < STATES.length; s++) {
     if (V[s][n-1] > V[endS][n-1]) endS = s;
   }
-  yield { phase: 'traceback', matrix: 'V', kind: 'argmax', i: n - 1, s: endS };
+  yield {
+    phase: 'traceback', matrix: 'V', kind: 'argmax', i: n - 1, s: endS,
+    pseudoLine: 'tb',
+    computation: `traceback start: argmax_s V[s][${n-1}] → state ${STATES[endS]}`,
+  };
 
   const path = new Array(n);
   path[n-1] = endS;
   for (let i = n - 1; i > 0; i--) {
     const prev = BP[path[i]][i];
     path[i-1] = prev;
-    yield { phase: 'traceback', matrix: 'V', kind: 'follow', i: i - 1, s: prev };
+    yield {
+      phase: 'traceback', matrix: 'V', kind: 'follow', i: i - 1, s: prev,
+      pseudoLine: 'tb',
+      computation: `follow bp[${STATES[path[i]]}][${i}] = ${STATES[prev]}`,
+    };
   }
 
   yield { phase: 'done', path };
@@ -380,19 +443,35 @@ function* forwardSteps(seq) {
   if (n === 0) { yield { phase: 'done', logPx: 0 }; return; }
   const F = STATES.map(() => new Array(n).fill(-Infinity));
   for (let s = 0; s < STATES.length; s++) {
-    F[s][0] = logPi[s] + logE[s][SYM_IDX[seq[0]]];
-    yield { phase: 'fill', matrix: 'F', i: 0, s, value: F[s][0] };
+    const sym = SYM_IDX[seq[0]];
+    F[s][0] = logPi[s] + logE[s][sym];
+    yield {
+      phase: 'fill', matrix: 'F', i: 0, s, value: F[s][0],
+      usedPi: s, usedE: { s, sym }, pseudoLine: 'init',
+      computation: `f[${STATES[s]}][0] = log π[${STATES[s]}] + log e_${STATES[s]}(${seq[0]}) `
+        + `= log(${PI[s]}) + log(${E[s][sym]}) = ${F[s][0].toFixed(3)}`,
+    };
   }
   for (let i = 1; i < n; i++) {
     const sym = SYM_IDX[seq[i]];
     for (let s = 0; s < STATES.length; s++) {
       const lse = logSumExp(STATES.map((_, t) => F[t][i-1] + logA[t][s]));
       F[s][i] = lse + logE[s][sym];
-      yield { phase: 'fill', matrix: 'F', i, s, value: F[s][i] };
+      yield {
+        phase: 'fill', matrix: 'F', i, s, value: F[s][i],
+        usedA: STATES.map((_, t) => ({ from: t, to: s })),  // ALL t contribute
+        usedE: { s, sym },
+        prevCells: STATES.map((_, t) => ({ matrix: 'F', s: t, i: i - 1 })),
+        pseudoLine: 'recur',
+        computation: `f[${STATES[s]}][${i}] = log e_${STATES[s]}(${seq[i]}) + logsumexp_t (f[t][${i-1}] + log a_t→${STATES[s]})`
+          + `\n      = log(${E[s][sym]}) + logsumexp(`
+          + STATES.map((_, t) => `${F[t][i-1].toFixed(2)} + log(${A[t][s]})`).join(', ')
+          + `) = ${F[s][i].toFixed(3)}`,
+      };
     }
   }
   const logPx = logSumExp(STATES.map((_, s) => F[s][n-1]));
-  yield { phase: 'done', logPx };
+  yield { phase: 'done', logPx, pseudoLine: 'final' };
 }
 
 // Backward: b[s][i] = P(xᵢ₊₁..xₙ | state_i = s)
@@ -403,18 +482,32 @@ function* backwardSteps(seq) {
   const B = STATES.map(() => new Array(n).fill(-Infinity));
   for (let s = 0; s < STATES.length; s++) {
     B[s][n-1] = 0;
-    yield { phase: 'fill', matrix: 'B', i: n-1, s, value: 0 };
+    yield {
+      phase: 'fill', matrix: 'B', i: n-1, s, value: 0,
+      pseudoLine: 'init',
+      computation: `b[${STATES[s]}][${n-1}] = 0     (i.e. log 1 — terminal condition)`,
+    };
   }
   for (let i = n - 2; i >= 0; i--) {
     const symNext = SYM_IDX[seq[i+1]];
     for (let s = 0; s < STATES.length; s++) {
       B[s][i] = logSumExp(STATES.map((_, t) => logA[s][t] + logE[t][symNext] + B[t][i+1]));
-      yield { phase: 'fill', matrix: 'B', i, s, value: B[s][i] };
+      yield {
+        phase: 'fill', matrix: 'B', i, s, value: B[s][i],
+        usedA: STATES.map((_, t) => ({ from: s, to: t })),        // outgoing from s
+        usedEMulti: STATES.map((_, t) => ({ s: t, sym: symNext })), // each t emits next symbol
+        prevCells: STATES.map((_, t) => ({ matrix: 'B', s: t, i: i + 1 })),
+        pseudoLine: 'recur',
+        computation: `b[${STATES[s]}][${i}] = logsumexp_t (log a_${STATES[s]}→t + log e_t(${seq[i+1]}) + b[t][${i+1}])`
+          + `\n      = logsumexp(`
+          + STATES.map((_, t) => `log(${A[s][t]}) + log(${E[t][symNext]}) + ${B[t][i+1].toFixed(2)}`).join(', ')
+          + `) = ${B[s][i].toFixed(3)}`,
+      };
     }
   }
   const sym0 = SYM_IDX[seq[0]];
   const logPx = logSumExp(STATES.map((_, s) => logPi[s] + logE[s][sym0] + B[s][0]));
-  yield { phase: 'done', logPx };
+  yield { phase: 'done', logPx, pseudoLine: 'final' };
 }
 
 // Posterior decoding: run Forward, then Backward, then γ[s][i] = f·b / P(x).
@@ -427,50 +520,81 @@ function* posteriorSteps(seq) {
   const F = STATES.map(() => new Array(n).fill(-Infinity));
   const B = STATES.map(() => new Array(n).fill(-Infinity));
 
-  // Forward fill
+  // Forward fill — same yields as forwardSteps but with pseudoLine 'fwd*'
   for (let s = 0; s < STATES.length; s++) {
-    F[s][0] = logPi[s] + logE[s][SYM_IDX[seq[0]]];
-    yield { phase: 'fill', matrix: 'F', i: 0, s, value: F[s][0] };
+    const sym = SYM_IDX[seq[0]];
+    F[s][0] = logPi[s] + logE[s][sym];
+    yield {
+      phase: 'fill', matrix: 'F', i: 0, s, value: F[s][0],
+      usedPi: s, usedE: { s, sym }, pseudoLine: 'fwd-init',
+      computation: `f[${STATES[s]}][0] = log π[${STATES[s]}] + log e_${STATES[s]}(${seq[0]}) = ${F[s][0].toFixed(3)}`,
+    };
   }
   for (let i = 1; i < n; i++) {
     const sym = SYM_IDX[seq[i]];
     for (let s = 0; s < STATES.length; s++) {
       const lse = logSumExp(STATES.map((_, t) => F[t][i-1] + logA[t][s]));
       F[s][i] = lse + logE[s][sym];
-      yield { phase: 'fill', matrix: 'F', i, s, value: F[s][i] };
+      yield {
+        phase: 'fill', matrix: 'F', i, s, value: F[s][i],
+        usedA: STATES.map((_, t) => ({ from: t, to: s })),
+        usedE: { s, sym },
+        prevCells: STATES.map((_, t) => ({ matrix: 'F', s: t, i: i - 1 })),
+        pseudoLine: 'fwd-recur',
+        computation: `f[${STATES[s]}][${i}] = log e_${STATES[s]}(${seq[i]}) + logsumexp_t (f[t][${i-1}] + log a_t→${STATES[s]}) = ${F[s][i].toFixed(3)}`,
+      };
     }
   }
 
   // Backward fill
   for (let s = 0; s < STATES.length; s++) {
     B[s][n-1] = 0;
-    yield { phase: 'fill', matrix: 'B', i: n-1, s, value: 0 };
+    yield {
+      phase: 'fill', matrix: 'B', i: n-1, s, value: 0,
+      pseudoLine: 'bwd-init',
+      computation: `b[${STATES[s]}][${n-1}] = 0  (log 1, terminal)`,
+    };
   }
   for (let i = n - 2; i >= 0; i--) {
     const symNext = SYM_IDX[seq[i+1]];
     for (let s = 0; s < STATES.length; s++) {
       B[s][i] = logSumExp(STATES.map((_, t) => logA[s][t] + logE[t][symNext] + B[t][i+1]));
-      yield { phase: 'fill', matrix: 'B', i, s, value: B[s][i] };
+      yield {
+        phase: 'fill', matrix: 'B', i, s, value: B[s][i],
+        usedA: STATES.map((_, t) => ({ from: s, to: t })),
+        usedEMulti: STATES.map((_, t) => ({ s: t, sym: symNext })),
+        prevCells: STATES.map((_, t) => ({ matrix: 'B', s: t, i: i + 1 })),
+        pseudoLine: 'bwd-recur',
+        computation: `b[${STATES[s]}][${i}] = logsumexp_t (log a_${STATES[s]}→t + log e_t(${seq[i+1]}) + b[t][${i+1}]) = ${B[s][i].toFixed(3)}`,
+      };
     }
   }
 
-  // γ[s][i] = exp(f[s][i] + b[s][i] - log P(x))
   const logPx = logSumExp(STATES.map((_, s) => F[s][n-1]));
   const G = STATES.map(() => new Array(n).fill(0));
   for (let i = 0; i < n; i++) {
     for (let s = 0; s < STATES.length; s++) {
       G[s][i] = Math.exp(F[s][i] + B[s][i] - logPx);
-      yield { phase: 'fill', matrix: 'G', i, s, value: G[s][i], isProb: true };
+      yield {
+        phase: 'fill', matrix: 'G', i, s, value: G[s][i], isProb: true,
+        prevCells: [{ matrix: 'F', s, i }, { matrix: 'B', s, i }],
+        pseudoLine: 'gamma',
+        computation: `γ[${STATES[s]}][${i}] = exp(f[${STATES[s]}][${i}] + b[${STATES[s]}][${i}] − log P(x)) `
+          + `= exp(${F[s][i].toFixed(2)} + ${B[s][i].toFixed(2)} − ${logPx.toFixed(2)}) = ${G[s][i].toFixed(3)}`,
+      };
     }
   }
 
-  // Per-column argmax of γ = posterior-decoded path
   const path = new Array(n);
   for (let i = 0; i < n; i++) {
     let bestS = 0;
     for (let s = 1; s < STATES.length; s++) if (G[s][i] > G[bestS][i]) bestS = s;
     path[i] = bestS;
-    yield { phase: 'traceback', matrix: 'G', kind: 'decode-col', i, s: bestS, prob: G[bestS][i] };
+    yield {
+      phase: 'traceback', matrix: 'G', kind: 'decode-col', i, s: bestS, prob: G[bestS][i],
+      pseudoLine: 'decode',
+      computation: `path[${i}] = argmax_s γ[s][${i}] = ${STATES[bestS]}  (γ = ${G[bestS][i].toFixed(3)})`,
+    };
   }
   yield { phase: 'done', path, logPx };
 }
@@ -484,11 +608,18 @@ const ALGORITHMS = {
     steps: viterbiSteps,
     decodes: true,
     summary: 'most-likely STATE PATH (single argmax over all paths)',
-    recurrence:
-`V[s][0]  = log π[s] + log e[s][x₀]
-V[s][i]  = log e[s][xᵢ] + max_t (V[t][i-1] + log a[t][s])
-bp[s][i] = argmax_t  V[t][i-1] + log a[t][s]
-path: traceback from argmax_s V[s][n-1]`,
+    pseudocode: [
+      { id: 'init',  text: 'V[s][0]  = log π[s] + log e[s][x₀]' },
+      { id: 'recur', text: 'V[s][i]  = log e[s][xᵢ] + max_t  (V[t][i-1] + log a[t][s])' },
+      { id: 'recur', text: 'bp[s][i] = argmax_t  V[t][i-1] + log a[t][s]' },
+      { id: 'tb',    text: 'path: traceback from argmax_s V[s][n-1]' },
+    ],
+    realWorld: [
+      { repo: 'EddyRivasLab/hmmer',         note: 'Profile-HMM Viterbi scoring for protein-domain search (hmmsearch / hmmscan).' },
+      { repo: 'Gaius-Augustus/Augustus',    note: 'Gene-prediction Viterbi over a generalized HMM of gene structure.' },
+      { repo: 'kaldi-asr/kaldi',            note: 'Viterbi decoding for HMM-based speech recognition.' },
+      { repo: 'hmmlearn/hmmlearn',          note: 'Python HMM library — Viterbi via .decode("viterbi").' },
+    ],
   },
   forward: {
     label: 'Forward',
@@ -496,11 +627,16 @@ path: traceback from argmax_s V[s][n-1]`,
     steps: forwardSteps,
     decodes: false,
     summary: 'LIKELIHOOD log P(x) = logsumexp_s f[s][n-1]',
-    recurrence:
-`f[s][0] = log π[s] + log e[s][x₀]
-f[s][i] = log e[s][xᵢ]
-        + logsumexp_t (f[t][i-1] + log a[t][s])
-log P(x) = logsumexp_s f[s][n-1]`,
+    pseudocode: [
+      { id: 'init',  text: 'f[s][0]  = log π[s] + log e[s][x₀]' },
+      { id: 'recur', text: 'f[s][i]  = log e[s][xᵢ] + logsumexp_t (f[t][i-1] + log a[t][s])' },
+      { id: 'final', text: 'log P(x) = logsumexp_s f[s][n-1]' },
+    ],
+    realWorld: [
+      { repo: 'EddyRivasLab/hmmer',         note: 'Forward gives the actual score used in HMMER3 (Viterbi is only a heuristic filter).' },
+      { repo: 'jmschrei/pomegranate',       note: 'Forward likelihood via .log_probability(sequence) on a python HMM.' },
+      { repo: 'KorfLab/StochHMM',           note: 'C++ HMM library — Forward for sequence likelihood / classification.' },
+    ],
   },
   backward: {
     label: 'Backward',
@@ -508,29 +644,40 @@ log P(x) = logsumexp_s f[s][n-1]`,
     steps: backwardSteps,
     decodes: false,
     summary: 'COMPLEMENT to Forward; together they give the posterior γ',
-    recurrence:
-`b[s][n-1] = 0       (i.e. log 1)
-b[s][i]   = logsumexp_t (log a[s][t]
-                       + log e[t][xᵢ₊₁]
-                       + b[t][i+1])
-log P(x) = logsumexp_s (log π[s] + log e[s][x₀] + b[s][0])`,
+    pseudocode: [
+      { id: 'init',  text: 'b[s][n-1] = 0     (log 1, terminal)' },
+      { id: 'recur', text: 'b[s][i]   = logsumexp_t (log a[s][t] + log e[t][xᵢ₊₁] + b[t][i+1])' },
+      { id: 'final', text: 'log P(x)  = logsumexp_s (log π[s] + log e[s][x₀] + b[s][0])' },
+    ],
+    realWorld: [
+      { repo: 'EddyRivasLab/hmmer',         note: 'Backward + Forward combine into the posterior probabilities HMMER prints in alignments.' },
+      { repo: 'jmschrei/pomegranate',       note: 'Backward used inside Baum-Welch (.fit) to compute expected counts.' },
+      { repo: 'KorfLab/StochHMM',           note: 'C++ HMM library — Backward for posterior / training routines.' },
+    ],
   },
   posterior: {
     label: 'Posterior',
     matrices: [
-      { name: 'F', title: 'f — Forward' },
-      { name: 'B', title: 'b — Backward' },
+      { name: 'F', title: 'f — Forward (left-to-right)' },
+      { name: 'B', title: 'b — Backward (right-to-left)' },
       { name: 'G', title: 'γ[state][i] = P(state_i = s | x) — posterior probability' },
     ],
     steps: posteriorSteps,
     decodes: true,
     summary: 'per-column argmax of γ (decoded INDEPENDENTLY at each position)',
-    recurrence:
-`run Forward and Backward, then:
-γ[s][i] = exp(f[s][i] + b[s][i] − log P(x))
-path[i] = argmax_s γ[s][i]
-(note: this path may have impossible transitions
- — that's the cost of independent per-position decoding)`,
+    pseudocode: [
+      { id: 'fwd-init',  text: 'f[s][0]   = log π[s] + log e[s][x₀]' },
+      { id: 'fwd-recur', text: 'f[s][i]   = log e[s][xᵢ] + logsumexp_t (f[t][i-1] + log a[t][s])' },
+      { id: 'bwd-init',  text: 'b[s][n-1] = 0' },
+      { id: 'bwd-recur', text: 'b[s][i]   = logsumexp_t (log a[s][t] + log e[t][xᵢ₊₁] + b[t][i+1])' },
+      { id: 'gamma',     text: 'γ[s][i]   = exp(f[s][i] + b[s][i] − log P(x))' },
+      { id: 'decode',    text: 'path[i]   = argmax_s γ[s][i]    (independent per position)' },
+    ],
+    realWorld: [
+      { repo: 'EddyRivasLab/hmmer',         note: 'Per-residue posterior probabilities annotated on every domain hit.' },
+      { repo: 'TimoLassmann/kalign',        note: 'MSA refinement using posterior probabilities.' },
+      { repo: 'KorfLab/StochHMM',           note: 'Posterior decoding as an alternative to Viterbi for ambiguous regions.' },
+    ],
   },
 };
 
@@ -660,6 +807,69 @@ function flashCell(matrix, s, i) {
   td.classList.add('current');
 }
 
+// ---- highlighting helpers ------------------------------------------------
+// Each step in applyStepInc first calls clearHighlights() and then paints
+// fresh marks for the cells / pseudocode line being used right now.
+function clearHighlights() {
+  document.querySelectorAll('td.used, td.used-secondary').forEach(e => {
+    e.classList.remove('used'); e.classList.remove('used-secondary');
+  });
+  document.querySelectorAll('td.contributor').forEach(e => e.classList.remove('contributor'));
+  document.querySelectorAll('pre#recurrence .pcline.active').forEach(e => e.classList.remove('active'));
+}
+function highlightPi(s)             { const td = document.getElementById(`pi-${s}`); if (td) td.classList.add('used'); }
+function highlightA(from, to, dim)  { const td = document.getElementById(`a-${from}-${to}`); if (td) td.classList.add(dim ? 'used-secondary' : 'used'); }
+function highlightE(s, sym, dim)    { const td = document.getElementById(`e-${s}-${sym}`); if (td) td.classList.add(dim ? 'used-secondary' : 'used'); }
+function highlightPseudoLine(id) {
+  if (!id) return;
+  document.querySelectorAll(`pre#recurrence .pcline[data-line="${id}"]`).forEach(e => e.classList.add('active'));
+}
+function highlightContributor(matrix, s, i) {
+  const td = document.getElementById(`c-${matrix}-${s}-${i}`);
+  if (td) td.classList.add('contributor');
+}
+
+function renderPseudocode(pseudocode) {
+  const pre = $('#recurrence');
+  pre.innerHTML = '';
+  for (const line of pseudocode) {
+    const span = document.createElement('span');
+    span.className = 'pcline';
+    span.dataset.line = line.id;
+    span.textContent = line.text;
+    pre.appendChild(span);
+  }
+}
+
+function renderRealWorld(list) {
+  const ul = $('#realworld');
+  ul.innerHTML = '';
+  for (const r of list) {
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.href = `https://github.com/${r.repo}`;
+    a.target = '_blank'; a.rel = 'noopener';
+    a.textContent = r.repo;
+    li.appendChild(a);
+    const note = document.createElement('span');
+    note.className = 'note';
+    note.textContent = r.note;
+    li.appendChild(note);
+    ul.appendChild(li);
+  }
+}
+
+function setComputation(text) {
+  const div = $('#computation');
+  if (!text) {
+    div.textContent = 'step through to see the per-cell computation';
+    div.classList.add('empty');
+  } else {
+    div.textContent = text;
+    div.classList.remove('empty');
+  }
+}
+
 function markPath(matrix, s, i) {
   const td = document.getElementById(`c-${matrix}-${s}-${i}`);
   if (td) td.classList.add('path');
@@ -720,7 +930,10 @@ function reset() {
   $('#decoded-title').innerHTML = algo.decodes
     ? `Decoded path &nbsp; <span class="small">${algo.summary}</span>`
     : `Output &nbsp; <span class="small">${algo.summary}</span>`;
-  $('#recurrence').textContent = algo.recurrence;
+  renderPseudocode(algo.pseudocode);
+  renderRealWorld(algo.realWorld || []);
+  setComputation(null);
+  clearHighlights();
 
   buildTrellises(seq, algo.matrices);
   buildDecoded(seq);
@@ -729,6 +942,9 @@ function reset() {
 }
 
 function applyStepInc(step) {
+  clearHighlights();
+  highlightPseudoLine(step.pseudoLine);
+
   if (step.phase === 'fill') {
     const range = state.ranges[step.matrix];
     if (!step.isProb && step.value > -Infinity && range) {
@@ -737,9 +953,22 @@ function applyStepInc(step) {
     }
     paintCell(step.matrix, step.s, step.i, step.value, step.bp, range, !!step.isProb);
     flashCell(step.matrix, step.s, step.i);
+
+    // highlight π / a / e cells the recurrence consulted
+    if (step.usedPi !== undefined) highlightPi(step.usedPi);
+    if (step.usedA) for (const a of step.usedA)         highlightA(a.from, a.to, false);
+    if (step.usedAGhost) for (const a of step.usedAGhost) highlightA(a.from, a.to, true);
+    if (step.usedE) highlightE(step.usedE.s, step.usedE.sym, false);
+    if (step.usedEMulti) for (const e of step.usedEMulti) highlightE(e.s, e.sym, false);
+
+    // highlight contributing previous trellis cells
+    if (step.prevCell)  highlightContributor(step.prevCell.matrix, step.prevCell.s, step.prevCell.i);
+    if (step.prevCells) for (const c of step.prevCells) highlightContributor(c.matrix, c.s, c.i);
+
     const v = step.isProb ? step.value.toFixed(3)
             : step.value === -Infinity ? '−∞' : step.value.toFixed(2);
     setStatus(`fill ${step.matrix}[${STATES[step.s]}][${step.i}] = ${v}`);
+    setComputation(step.computation);
     return;
   }
   if (step.phase === 'traceback') {
@@ -753,6 +982,7 @@ function applyStepInc(step) {
       markPath(step.matrix, step.s, step.i);
       setStatus(`posterior decode column ${step.i}: argmax γ = state ${STATES[step.s]} with γ = ${step.prob.toFixed(3)}`);
     }
+    if (step.computation) setComputation(step.computation);
     return;
   }
   if (step.phase === 'done') {
@@ -764,6 +994,8 @@ function applyStepInc(step) {
     } else {
       setStatus('done');
     }
+    clearHighlights();
+    setComputation(null);
   }
 }
 
@@ -887,6 +1119,10 @@ if (params.has('seq')) {
   applyPreset($('#preset').value);
 }
 if (params.has('autoplay')) play();
+if (params.has('steps')) {
+  const n = parseInt(params.get('steps'), 10);
+  for (let i = 0; i < n; i++) goForward();
+}
 </script>
 </body>
 </html>
