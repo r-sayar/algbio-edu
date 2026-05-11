@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Evoformer block — 3-D voxel viz</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0e1116; color: #ddd;
+               font-family: -apple-system, system-ui, sans-serif;
+               overflow: hidden; }
+  #c { position: fixed; inset: 0; }
+  #ui {
+    position: fixed; top: 12px; left: 12px; z-index: 10;
+    background: rgba(20,24,30,0.85);
+    padding: 12px 14px; border-radius: 8px;
+    border: 1px solid #2c3340;
+    font-size: 13px; line-height: 1.5; max-width: 360px;
+  }
+  #ui h1 { margin: 0 0 6px 0; font-size: 14px; }
+  #ui small { color: #9aa6b6; }
+  #stepname { font-weight: 600; color: #ffd479; }
+  .row { margin: 8px 0; }
+  button {
+    background: #1f2530; color: #ddd; border: 1px solid #3a4252;
+    padding: 4px 10px; border-radius: 4px; font-family: inherit;
+    cursor: pointer; margin-right: 6px;
+  }
+  button:hover { background: #283142; }
+  #legend { position: fixed; bottom: 12px; left: 12px; z-index: 10;
+            background: rgba(20,24,30,0.85); padding: 8px 12px;
+            border-radius: 6px; border: 1px solid #2c3340; font-size: 11px; }
+  #legend .swatch { display: inline-block; width: 12px; height: 12px;
+                    vertical-align: middle; margin-right: 4px;
+                    border: 1px solid #555; }
+  kbd { background:#293040; border:1px solid #3a4252; border-radius:3px;
+        padding:1px 5px; font-family:inherit; font-size:11px; }
+</style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <div id="ui">
+    <h1>Evoformer block — 3-D toy viz</h1>
+    <small>Each cube = one tensor cell.  Hue from blue (negative) → red (positive).</small>
+    <div class="row">step: <span id="stepname">input</span> &nbsp; <span id="stepidx" style="color:#9aa6b6"></span></div>
+    <div class="row">
+      <button id="prev">◀ prev</button>
+      <button id="next">next ▶</button>
+      <button id="play">play</button>
+    </div>
+    <div class="row" style="font-size:11px; color:#9aa6b6">
+      <kbd>drag</kbd> rotate &nbsp; <kbd>shift+drag</kbd> pan &nbsp; <kbd>wheel</kbd> zoom
+    </div>
+  </div>
+
+  <div id="legend">
+    <span class="swatch" style="background:#3266ff"></span>−2.0
+    &nbsp;<span class="swatch" style="background:#888"></span>0
+    &nbsp;<span class="swatch" style="background:#ff5050"></span>+2.0
+    &nbsp;&nbsp;<b>m</b>: MSA (N_seq × N_res × c)
+    &nbsp;&nbsp;<b>z</b>: pair (N_res × N_res × c)
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

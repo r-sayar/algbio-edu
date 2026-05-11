@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Protein structure-similarity scores — interactive</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --bg2: #161b24;
+    --card: #1a1f2a;
+    --line: #2c3340;
+    --txt: #e6ebf2;
+    --muted: #9aa6b6;
+    --accent: #ffd479;
+  }
+  html, body {
+    margin: 0; background: var(--bg); color: var(--txt);
+    font-family: -apple-system, system-ui, Segoe UI, sans-serif;
+    line-height: 1.5;
+  }
+  body { padding: 20px 28px 60px; }
+  h1 { font-size: 22px; margin: 0 0 6px 0; }
+  h1 small { color: var(--muted); font-weight: 400; font-size: 13px; }
+
+  .scores {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px; margin: 20px 0 8px;
+  }
+  .score-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .score-card .label { font-size: 12px; color: var(--muted);
+                       text-transform: uppercase; letter-spacing: 0.07em; }
+  .score-card .val   { font-size: 28px; font-weight: 600; margin-top: 4px;
+                       color: var(--accent); font-variant-numeric: tabular-nums; }
+  .score-card .scale { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  .panel { background: var(--card); border: 1px solid var(--line);
+           border-radius: 8px; padding: 14px 16px; margin: 14px 0; }
+  .panel h2 { margin: 0 0 10px 0; font-size: 14px; color: #cfd6e0;
+              text-transform: uppercase; letter-spacing: 0.07em; }
+
+  .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .controls > div { display: flex; align-items: center; gap: 6px; }
+  .controls label { color: var(--muted); font-size: 12px; }
+  input[type=range] { width: 130px; accent-color: var(--accent); }
+  input[type=number] { background: var(--bg2); color: var(--txt);
+                       border: 1px solid var(--line); border-radius: 4px;
+                       padding: 3px 6px; width: 56px;
+                       font-family: inherit; font-size: 13px; }
+  button { background: #232938; color: var(--txt);
+           border: 1px solid var(--line); border-radius: 4px;
+           padding: 5px 11px; cursor: pointer; font-family: inherit;
+           font-size: 12px; }
+  button:hover { background: #2c3344; }
+
+  /* residue rows: each row = label + slider + bar */
+  .residues { display: grid; gap: 6px; }
+  .row {
+    display: grid;
+    grid-template-columns: 70px 110px 1fr 70px;
+    gap: 10px; align-items: center;
+  }
+  .row .name { color: var(--muted); font-size: 12px;
+               font-variant-numeric: tabular-nums; }
+  .row input[type=range] { width: 110px; }
+  .row .dist { color: var(--accent); font-variant-numeric: tabular-nums;
+               font-size: 12px; text-align: right; }
+  .barwrap { position: relative; height: 16px; background: #11151c;
+             border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+  .barwrap .bar { position: absolute; top: 0; bottom: 0; left: 0;
+                  border-radius: 2px; }
+  .barwrap .threshold { position: absolute; top: 0; bottom: 0; width: 1px;
+                        background: rgba(255,255,255,0.18); }
+  .barwrap .threshold.has-label::after {
+    content: attr(data-l); position: absolute; top: -14px; left: -8px;
+    font-size: 9px; color: var(--muted); white-space: nowrap;
+  }
+
+  .formulas pre { margin: 0; padding: 10px 12px; background: var(--bg2);
+                  border-radius: 6px; border: 1px solid var(--line);
+                  overflow-x: auto; font-size: 12px; line-height: 1.55;
+                  color: #d2dae6; }
+  .formulas .lbl { color: var(--accent); }
+
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; }
+  .presets .preset { background: #2a2235; }
+  .presets .preset:hover { background: #382c47; }
+
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  details summary:hover { color: var(--txt); }
+</style>
+</head>
+<body>
+
+<h1>Protein structure-similarity scores
+    <small>—interactive playground for TM-score, GDT_TS, GDT_HA, RMSD</small></h1>
+<p style="color:var(--muted);max-width:780px;font-size:13px;margin:6px 0 0">
+  Drag the sliders to set the Cα–Cα distance for each residue (after optimal
+  superposition). All four scores recompute in real time.  Try the presets to
+  see how each metric responds to the same prediction.
+</p>
+
+<!-- Score readout -->
+<div class="scores">
+  <div class="score-card">
+    <div class="label">TM-score</div>
+    <div class="val" id="s-tm">–</div>
+    <div class="scale">[0…1]&nbsp;&nbsp;same fold ≥ 0.5</div>
+  </div>
+  <div class="score-card">
+    <div class="label">GDT_TS</div>
+    <div class="val" id="s-gdtts">–</div>
+    <div class="scale">[0…100]&nbsp;&nbsp;mean of P₁ P₂ P₄ P₈</div>
+  </div>
+  <div class="score-card">
+    <div class="label">GDT_HA</div>
+    <div class="val" id="s-gdtha">–</div>
+    <div class="scale">[0…100]&nbsp;&nbsp;mean of P₀.₅ P₁ P₂ P₄</div>
+  </div>
+  <div class="score-card">
+    <div class="label">RMSD</div>
+    <div class="val" id="s-rmsd">–</div>
+    <div class="scale">Å&nbsp;&nbsp;sqrt(mean(d²))</div>
+  </div>
+</div>
+
+<!-- Controls -->
+<div class="panel">
+  <h2>controls</h2>
+  <div class="controls">
+    <div>
+      <label>protein length L:</label>
+      <input type="range" id="L-slider" min="5" max="30" step="1" value="12">
+      <input type="number" id="L-num" min="5" max="30" step="1" value="12">
+    </div>
+    <span style="flex:1"></span>
+    <div class="presets" id="presets">
+      <!-- preset buttons injected below -->
+    </div>
+  </div>
+</div>
+
+<!-- Formula breakdown -->
+<div class="panel formulas">
+  <h2>how the numbers are computed (live)</h2>
+  <pre id="formulas"></pre>
+</div>
+
+<!-- Residue editor -->
+<div class="panel">
+  <h2>residues — drag to set Cα distance from experiment (Å)</h2>
+  <div class="residues" id="residues"></div>
+  <div style="font-size:11px;color:var(--muted);margin-top:10px">
+    bar colour: green &lt;1 Å · yellow &lt;2 Å · orange &lt;4 Å · red &lt;8 Å · grey ≥ 8 Å.
+    Vertical lines mark the GDT thresholds.
+  </div>
+</div>
+
+<details style="margin-top:18px">
+  <summary>show definitions / cutoffs</summary>
+  <div class="panel">
+    <p><b>TM-score</b> &nbsp;<span style="color:var(--muted)">Zhang &amp; Skolnick, 2004.</span></p>
+    <pre>TM = (1/L) · Σᵢ  1 / (1 + (dᵢ/d₀)²)
+d₀ = max( 1.24 · ∛(L - 15) - 1.8 ,  0.5 )</pre>
+    <p>0 — unrelated · 0.17 random · &gt; 0.5 = same fold · 1 = identical</p>
+
+    <p><b>GDT_TS</b> &nbsp;<span style="color:var(--muted)">Zemla, 1999.</span></p>
+    <pre>GDT_TS = (P₁ + P₂ + P₄ + P₈) / 4
+Pₓ = 100 · (# residues within x Å) / L
+The four Pₓ are <i>cumulative</i> (nested), not exclusive bins.</pre>
+
+    <p><b>GDT_HA</b> = same recipe, tighter thresholds 0.5, 1, 2, 4 Å. Used for high-quality predictions.</p>
+
+    <p><b>RMSD</b> = √(mean of dᵢ²) — sensitive to outliers, no length normalization.</p>
+  </div>
+</details>
+
+<script src="./main.js"></script>
+</body>
+</html>

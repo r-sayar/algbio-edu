@@ -1,0 +1,657 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pairwise alignment visualizer — Needleman-Wunsch / Smith-Waterman</title>
+<style>
+  :root {
+    --bg: #fafafa;
+    --panel: #ffffff;
+    --ink: #1f2933;
+    --muted: #5d6b7a;
+    --grid: #e2e8f0;
+    --accent: #2563eb;
+    --accent-soft: #dbeafe;
+    --pair: #16a34a;
+    --pair-soft: #dcfce7;
+    --flash: #fde68a;
+    --diag: #c7d2fe;
+    --up: #fee2e2;
+    --left: #fef3c7;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink); background: var(--bg);
+  }
+  header { padding: 16px 20px; border-bottom: 1px solid var(--grid); background: var(--panel); }
+  header h1 { margin: 0 0 4px 0; font-size: 18px; }
+  header p  { margin: 0; color: var(--muted); font-size: 13px; }
+  header a  { color: var(--accent); }
+
+  #controls {
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    padding: 12px 20px; background: var(--panel);
+    border-bottom: 1px solid var(--grid);
+  }
+  #controls label  { font-size: 13px; color: var(--muted); }
+  #controls select, #controls input[type=text], #controls input[type=number], #controls button {
+    font: inherit; padding: 6px 10px;
+    border: 1px solid var(--grid); border-radius: 6px;
+    background: white; color: var(--ink);
+  }
+  #controls input[type=text] {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  #controls input[type=number] { width: 56px; }
+  #controls button { cursor: pointer; }
+  #controls button.primary { background: var(--accent); color: white; border-color: var(--accent); }
+  #controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #status {
+    margin-left: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px; color: var(--muted);
+  }
+
+  main {
+    display: grid;
+    grid-template-columns: minmax(620px, 2fr) minmax(320px, 1fr);
+    gap: 16px;
+    padding: 16px 20px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--grid);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .panel h2 {
+    margin: 0 0 8px 0; font-size: 13px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .panel h2 .small { font-weight: 400; color: #94a3b8; text-transform: none; }
+  #panel-matrix    { grid-column: 1; grid-row: 1; overflow: auto; }
+  #panel-alignment { grid-column: 1; grid-row: 2; }
+  #panel-info      { grid-column: 2; grid-row: 1 / span 2; }
+
+  /* DP matrix */
+  table.dpmatrix {
+    border-collapse: collapse;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+  }
+  table.dpmatrix th, table.dpmatrix td {
+    width: 42px; height: 32px;
+    text-align: center;
+    border: 1px solid var(--grid);
+    color: var(--ink);
+    vertical-align: middle;
+    position: relative;
+  }
+  table.dpmatrix th { background: #f1f5f9; color: var(--muted); font-weight: 600; }
+  table.dpmatrix th.symbol { font-size: 13px; color: var(--ink); }
+  table.dpmatrix td.empty   { color: #cbd5e1; }
+  table.dpmatrix td.filled  {
+    background: color-mix(in srgb, var(--accent-soft) calc((1 - var(--t, 0)) * 100%), var(--accent) calc(var(--t, 0) * 100%));
+    color: white;
+  }
+  table.dpmatrix td.filled.zero { background: #f1f5f9; color: var(--ink); }
+  table.dpmatrix td.filled.neg  { background: color-mix(in srgb, #fee2e2 calc((1 - var(--t, 0)) * 100%), #b91c1c calc(var(--t, 0) * 100%)); color: white; }
+  table.dpmatrix td.current { outline: 3px solid var(--flash); outline-offset: -3px; }
+  table.dpmatrix td.path    { background: var(--pair) !important; color: white !important; font-weight: 600; }
+  table.dpmatrix td .v       { font-size: 11px; line-height: 1.1; }
+  table.dpmatrix td .bp      {
+    position: absolute; top: 1px; right: 3px; font-size: 10px;
+    color: rgba(255, 255, 255, 0.7);
+  }
+  table.dpmatrix td.zero .bp, table.dpmatrix td.empty .bp { color: rgba(0, 0, 0, 0.4); }
+
+  /* alignment strip */
+  #alignment {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 16px; line-height: 1.4;
+    white-space: pre;
+    overflow-x: auto;
+    padding: 8px 4px;
+  }
+  #alignment .row { display: flex; gap: 0; }
+  #alignment .ch  {
+    display: inline-block; width: 18px; text-align: center;
+    line-height: 22px; height: 22px; border-radius: 3px;
+  }
+  #alignment .ch.match    { background: var(--pair-soft); color: var(--pair); font-weight: 600; }
+  #alignment .ch.mismatch { background: #fef3c7; color: #92400e; }
+  #alignment .ch.gap      { color: var(--muted); }
+  #alignment .label       { color: var(--muted); margin-right: 8px; align-self: center; font-size: 12px; }
+
+  /* info panel */
+  .info-block { margin-bottom: 16px; }
+  .info-block h3 { margin: 0 0 6px 0; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  table.params {
+    border-collapse: collapse;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+  }
+  table.params th, table.params td {
+    padding: 4px 8px; border: 1px solid var(--grid);
+    text-align: center; min-width: 30px;
+  }
+  table.params th { background: #f1f5f9; color: var(--muted); font-weight: 600; }
+  pre.recurrence {
+    font-size: 11px; background: #f8fafc; padding: 8px;
+    border-radius: 4px; margin: 0; color: var(--ink);
+  }
+
+  .legend {
+    display: flex; gap: 14px; flex-wrap: wrap;
+    margin-top: 8px; font-size: 12px; color: var(--muted);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; border: 1px solid var(--grid); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Pairwise sequence alignment — Needleman-Wunsch &amp; Smith-Waterman</h1>
+  <p>
+    Step through the classic alignment DP. The matrix fills row-by-row; the traceback
+    reads back-pointers from the chosen end-cell to recover the optimal alignment.
+    Switch between <a href="https://en.wikipedia.org/wiki/Needleman%E2%80%93Wunsch_algorithm">Needleman-Wunsch</a>
+    (global, end-to-end) and <a href="https://en.wikipedia.org/wiki/Smith%E2%80%93Waterman_algorithm">Smith-Waterman</a>
+    (local, best subsegment) — same recurrence, different boundary + traceback rules.
+  </p>
+</header>
+
+<div id="controls">
+  <label>Algorithm:
+    <select id="algo">
+      <option value="nw" selected>Needleman-Wunsch (global)</option>
+      <option value="sw">Smith-Waterman (local)</option>
+    </select>
+  </label>
+  <label>seq A: <input type="text" id="seqA" value="GATTACA" autocomplete="off" size="14"></label>
+  <label>seq B: <input type="text" id="seqB" value="GCATGCU" autocomplete="off" size="14"></label>
+  <label>match: <input type="number" id="match" value="2"></label>
+  <label>mismatch: <input type="number" id="mismatch" value="-1"></label>
+  <label>gap: <input type="number" id="gap" value="-2"></label>
+  <button id="reset">Reset</button>
+  <button id="back">◀ Back</button>
+  <button id="play" class="primary">Play</button>
+  <button id="step">Next ▶</button>
+  <label>Speed:
+    <select id="speed">
+      <option value="500">slow</option>
+      <option value="120" selected>medium</option>
+      <option value="20">fast</option>
+      <option value="2">turbo</option>
+    </select>
+  </label>
+  <span id="status">idle</span>
+</div>
+
+<main>
+  <section id="panel-matrix" class="panel">
+    <h2 id="matrix-title">DP matrix</h2>
+    <div id="matrix-host"></div>
+    <div class="legend">
+      <span><i style="background: var(--accent)"></i>high score</span>
+      <span><i style="background: #b91c1c"></i>negative score</span>
+      <span><i style="background: var(--flash)"></i>current cell</span>
+      <span><i style="background: var(--pair)"></i>traceback path</span>
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin:8px 0 0 0">
+      Top-right corner shows the back-pointer arrow (↖ diagonal = match/mismatch, ↑ up = gap in B, ← left = gap in A).
+    </p>
+  </section>
+
+  <section id="panel-alignment" class="panel">
+    <h2>Alignment <span class="small">— recovered by traceback</span></h2>
+    <div id="alignment"></div>
+  </section>
+
+  <section id="panel-info" class="panel">
+    <h2>Algorithm</h2>
+
+    <div class="info-block">
+      <h3>Scoring</h3>
+      <table class="params" id="scoring-tbl"></table>
+    </div>
+
+    <div class="info-block">
+      <h3>Recurrence (NW)</h3>
+      <pre class="recurrence" id="recurrence-nw">M[0][0] = 0
+M[i][0] = i · gap
+M[0][j] = j · gap
+M[i][j] = max(
+  M[i-1][j-1] + s(A[i],B[j]),  // ↖
+  M[i-1][j] + gap,              // ↑
+  M[i][j-1] + gap,              // ←
+)
+traceback from M[m][n]</pre>
+    </div>
+
+    <div class="info-block">
+      <h3>Recurrence (SW)</h3>
+      <pre class="recurrence" id="recurrence-sw">M[i][0] = M[0][j] = 0
+M[i][j] = max(
+  0,                            // local restart
+  M[i-1][j-1] + s(A[i],B[j]),
+  M[i-1][j] + gap,
+  M[i][j-1] + gap,
+)
+traceback from argmax M[i][j],
+stop when M = 0</pre>
+    </div>
+
+    <div class="info-block">
+      <h3>Why the difference?</h3>
+      <p style="font-size:12px;color:var(--muted);margin:0">
+        NW forces an end-to-end alignment — even highly diverged ends pay gap costs.
+        SW lets the score "restart" at zero, so it finds the single best matching subsegment.
+        Same DP shape, different rules at the boundary and the traceback.
+      </p>
+    </div>
+  </section>
+</main>
+
+<script>
+// ============================================================================
+// 1. Algorithms — both yield steps the same way
+// ============================================================================
+
+function score(a, b, match, mismatch) { return a === b ? match : mismatch; }
+
+function* nwSteps(A, B, match, mismatch, gap) {
+  const m = A.length, n = B.length;
+  const M  = Array.from({length: m + 1}, () => new Array(n + 1).fill(0));
+  const BP = Array.from({length: m + 1}, () => new Array(n + 1).fill('·'));
+  // init
+  for (let i = 0; i <= m; i++) { M[i][0] = i * gap; BP[i][0] = i === 0 ? '·' : '↑'; yield { phase: 'fill', i, j: 0, value: M[i][0], bp: BP[i][0] }; }
+  for (let j = 1; j <= n; j++) { M[0][j] = j * gap; BP[0][j] = '←'; yield { phase: 'fill', i: 0, j, value: M[0][j], bp: BP[0][j] }; }
+  // fill
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const diag = M[i-1][j-1] + score(A[i-1], B[j-1], match, mismatch);
+      const up   = M[i-1][j]   + gap;
+      const left = M[i][j-1]   + gap;
+      let best = diag, bp = '↖';
+      if (up   > best) { best = up;   bp = '↑'; }
+      if (left > best) { best = left; bp = '←'; }
+      M[i][j] = best; BP[i][j] = bp;
+      yield { phase: 'fill', i, j, value: best, bp };
+    }
+  }
+  // traceback from (m, n)
+  yield { phase: 'traceback', kind: 'start', i: m, j: n };
+  let i = m, j = n;
+  const aligned = { a: '', b: '' };
+  while (i > 0 || j > 0) {
+    const bp = BP[i][j];
+    if (bp === '↖' && i > 0 && j > 0) {
+      aligned.a = A[i-1] + aligned.a; aligned.b = B[j-1] + aligned.b;
+      i--; j--;
+    } else if (bp === '↑' && i > 0) {
+      aligned.a = A[i-1] + aligned.a; aligned.b = '-' + aligned.b;
+      i--;
+    } else if (bp === '←' && j > 0) {
+      aligned.a = '-' + aligned.a; aligned.b = B[j-1] + aligned.b;
+      j--;
+    } else if (i > 0) { aligned.a = A[i-1] + aligned.a; aligned.b = '-' + aligned.b; i--; }
+    else              { aligned.a = '-' + aligned.a; aligned.b = B[j-1] + aligned.b; j--; }
+    yield { phase: 'traceback', kind: 'step', i, j, aligned: { a: aligned.a, b: aligned.b } };
+  }
+  yield { phase: 'done', score: M[m][n], aligned };
+}
+
+function* swSteps(A, B, match, mismatch, gap) {
+  const m = A.length, n = B.length;
+  const M  = Array.from({length: m + 1}, () => new Array(n + 1).fill(0));
+  const BP = Array.from({length: m + 1}, () => new Array(n + 1).fill('·'));
+  let bestI = 0, bestJ = 0, bestV = 0;
+  for (let i = 0; i <= m; i++) { yield { phase: 'fill', i, j: 0, value: 0, bp: '·' }; }
+  for (let j = 1; j <= n; j++) { yield { phase: 'fill', i: 0, j, value: 0, bp: '·' }; }
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const diag = M[i-1][j-1] + score(A[i-1], B[j-1], match, mismatch);
+      const up   = M[i-1][j]   + gap;
+      const left = M[i][j-1]   + gap;
+      let best = 0, bp = '·';                                // local restart
+      if (diag > best) { best = diag; bp = '↖'; }
+      if (up   > best) { best = up;   bp = '↑'; }
+      if (left > best) { best = left; bp = '←'; }
+      M[i][j] = best; BP[i][j] = bp;
+      if (best > bestV) { bestV = best; bestI = i; bestJ = j; }
+      yield { phase: 'fill', i, j, value: best, bp };
+    }
+  }
+  yield { phase: 'traceback', kind: 'start', i: bestI, j: bestJ };
+  let i = bestI, j = bestJ;
+  const aligned = { a: '', b: '' };
+  while (i > 0 && j > 0 && M[i][j] > 0) {
+    const bp = BP[i][j];
+    if (bp === '↖') {
+      aligned.a = A[i-1] + aligned.a; aligned.b = B[j-1] + aligned.b;
+      i--; j--;
+    } else if (bp === '↑') {
+      aligned.a = A[i-1] + aligned.a; aligned.b = '-' + aligned.b;
+      i--;
+    } else if (bp === '←') {
+      aligned.a = '-' + aligned.a; aligned.b = B[j-1] + aligned.b;
+      j--;
+    } else break;
+    yield { phase: 'traceback', kind: 'step', i, j, aligned: { a: aligned.a, b: aligned.b } };
+  }
+  yield { phase: 'done', score: bestV, aligned };
+}
+
+const ALGORITHMS = {
+  nw: { label: 'Needleman-Wunsch (global)', steps: nwSteps },
+  sw: { label: 'Smith-Waterman (local)',    steps: swSteps },
+};
+
+// ============================================================================
+// 2. Rendering
+// ============================================================================
+
+const $ = sel => document.querySelector(sel);
+
+function buildMatrix(A, B) {
+  const m = A.length, n = B.length;
+  const host = $('#matrix-host');
+  host.innerHTML = '';
+  const tbl = document.createElement('table');
+  tbl.className = 'dpmatrix';
+
+  // header: blank, blank, B[0], B[1], ...
+  const thead = document.createElement('thead');
+  let hr = document.createElement('tr');
+  hr.appendChild(document.createElement('th'));
+  hr.appendChild(document.createElement('th'));
+  for (let j = 0; j < n; j++) {
+    const th = document.createElement('th'); th.className = 'symbol';
+    th.textContent = B[j]; hr.appendChild(th);
+  }
+  thead.appendChild(hr);
+  // index row
+  hr = document.createElement('tr');
+  hr.appendChild(document.createElement('th'));
+  hr.appendChild(document.createElement('th'));
+  for (let j = 0; j <= n; j++) {
+    const th = document.createElement('th'); th.textContent = j; hr.appendChild(th);
+  }
+  thead.appendChild(hr);
+  tbl.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  // first row: row label (none) + index 0 + cells
+  for (let i = 0; i <= m; i++) {
+    const tr = document.createElement('tr');
+    const lh = document.createElement('th');
+    lh.className = 'symbol';
+    lh.textContent = i === 0 ? '' : A[i-1];
+    tr.appendChild(lh);
+    const ih = document.createElement('th');
+    ih.textContent = i; tr.appendChild(ih);
+    for (let j = 0; j <= n; j++) {
+      const td = document.createElement('td');
+      td.id = `c-${i}-${j}`;
+      td.className = 'empty';
+      td.innerHTML = '<span class="v">·</span>';
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  tbl.appendChild(tbody);
+  host.appendChild(tbl);
+}
+
+function buildAlignment() {
+  const host = $('#alignment'); host.innerHTML = '';
+}
+
+function renderAlignment(a, b) {
+  const host = $('#alignment'); host.innerHTML = '';
+  const make = (label, str, other) => {
+    const row = document.createElement('div'); row.className = 'row';
+    const lab = document.createElement('span'); lab.className = 'label'; lab.textContent = label;
+    row.appendChild(lab);
+    for (let i = 0; i < str.length; i++) {
+      const c = document.createElement('span'); c.className = 'ch';
+      const ch = str[i], oc = other[i];
+      c.textContent = ch;
+      if (ch === '-') c.classList.add('gap');
+      else if (oc === '-') c.classList.add('gap');
+      else if (ch === oc) c.classList.add('match');
+      else c.classList.add('mismatch');
+      row.appendChild(c);
+    }
+    return row;
+  };
+  host.appendChild(make('A', a, b));
+  // middle line: | for match, : for mismatch, space for gap
+  const mid = document.createElement('div'); mid.className = 'row';
+  const lab = document.createElement('span'); lab.className = 'label'; lab.textContent = ' ';
+  mid.appendChild(lab);
+  for (let i = 0; i < a.length; i++) {
+    const c = document.createElement('span'); c.className = 'ch';
+    if (a[i] === '-' || b[i] === '-') c.textContent = ' ';
+    else if (a[i] === b[i])           { c.textContent = '|'; c.classList.add('match'); }
+    else                              { c.textContent = '·'; c.classList.add('mismatch'); }
+    mid.appendChild(c);
+  }
+  host.appendChild(mid);
+  host.appendChild(make('B', b, a));
+}
+
+function paintCell(i, j, value, bp, range) {
+  const td = document.getElementById(`c-${i}-${j}`);
+  if (!td) return;
+  td.classList.remove('empty');
+  td.classList.add('filled');
+  td.classList.remove('zero', 'neg');
+  if (value === 0) td.classList.add('zero');
+  else if (value < 0) td.classList.add('neg');
+  td.innerHTML = `<span class="v">${value}</span><span class="bp">${bp}</span>`;
+  if (value !== 0) {
+    const ref = value > 0 ? Math.max(1, range.max) : Math.min(-1, range.min);
+    const t = Math.min(1, Math.abs(value) / Math.abs(ref));
+    td.style.setProperty('--t', t.toFixed(2));
+  }
+}
+
+function flashCell(i, j) {
+  const td = document.getElementById(`c-${i}-${j}`);
+  if (!td) return;
+  document.querySelectorAll('td.current').forEach(e => e.classList.remove('current'));
+  td.classList.add('current');
+}
+
+function markPath(i, j) {
+  const td = document.getElementById(`c-${i}-${j}`);
+  if (td) td.classList.add('path');
+}
+
+function setStatus(msg) { $('#status').textContent = msg; }
+
+function buildScoringTable(match, mismatch, gap) {
+  const tbl = $('#scoring-tbl');
+  tbl.innerHTML = '';
+  const thead = document.createElement('thead');
+  const hr = document.createElement('tr');
+  hr.innerHTML = '<th></th><th>A</th><th>C</th><th>G</th><th>T/U</th><th>gap</th>';
+  thead.appendChild(hr); tbl.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  for (const a of ['A','C','G','T']) {
+    const tr = document.createElement('tr');
+    let html = `<th>${a}</th>`;
+    for (const b of ['A','C','G','T']) {
+      html += `<td>${a === b ? match : mismatch}</td>`;
+    }
+    html += `<td>${gap}</td>`;
+    tr.innerHTML = html;
+    tbody.appendChild(tr);
+  }
+  tbl.appendChild(tbody);
+}
+
+// ============================================================================
+// 3. Step driver
+// ============================================================================
+
+let state = null;
+
+function reset() {
+  pausePlay();
+  const A = $('#seqA').value.trim().toUpperCase().replace(/U/g, 'T');
+  const B = $('#seqB').value.trim().toUpperCase().replace(/U/g, 'T');
+  if (!/^[ACGT]+$/.test(A) || !/^[ACGT]+$/.test(B) || A.length < 1 || B.length < 1) {
+    setStatus('invalid sequences (use A/C/G/T, both non-empty)');
+    return;
+  }
+  if (A.length > 18 || B.length > 18) {
+    setStatus(`sequences trimmed to first 18 chars (matrix gets unwieldy beyond that)`);
+    $('#seqA').value = A.slice(0, 18);
+    $('#seqB').value = B.slice(0, 18);
+    reset();
+    return;
+  }
+  const match    = parseInt($('#match').value, 10);
+  const mismatch = parseInt($('#mismatch').value, 10);
+  const gap      = parseInt($('#gap').value, 10);
+  const algoKey  = $('#algo').value;
+  const algo     = ALGORITHMS[algoKey];
+
+  const steps = [];
+  for (const s of algo.steps(A, B, match, mismatch, gap)) steps.push(s);
+
+  state = {
+    A, B, match, mismatch, gap, algoKey, algo,
+    steps,
+    cursor: -1,
+    range: { min: 0, max: 0 },
+  };
+  $('#matrix-title').textContent = `${algo.label} — DP matrix M[i][j]`;
+  buildMatrix(A, B);
+  buildAlignment();
+  buildScoringTable(match, mismatch, gap);
+  setStatus(`ready — ${A.length}×${B.length} matrix, ${steps.length} total steps`);
+  updateButtons();
+}
+
+function applyStepInc(step) {
+  if (step.phase === 'fill') {
+    if (step.value > state.range.max) state.range.max = step.value;
+    if (step.value < state.range.min) state.range.min = step.value;
+    paintCell(step.i, step.j, step.value, step.bp, state.range);
+    flashCell(step.i, step.j);
+    setStatus(`fill M[${step.i}][${step.j}] = ${step.value}`);
+    return;
+  }
+  if (step.phase === 'traceback') {
+    if (step.kind === 'start') {
+      markPath(step.i, step.j);
+      setStatus(`traceback start at (${step.i}, ${step.j})`);
+    } else {
+      markPath(step.i, step.j);
+      if (step.aligned) renderAlignment(step.aligned.a, step.aligned.b);
+      setStatus(`traceback step → (${step.i}, ${step.j})`);
+    }
+    return;
+  }
+  if (step.phase === 'done') {
+    renderAlignment(step.aligned.a, step.aligned.b);
+    setStatus(`done — score = ${step.score}`);
+  }
+}
+
+function rebuildUpTo(idx) {
+  buildMatrix(state.A, state.B);
+  buildAlignment();
+  state.range = { min: 0, max: 0 };
+  for (let i = 0; i <= idx; i++) applyStepInc(state.steps[i]);
+  if (idx < 0) setStatus(`reset — 0 of ${state.steps.length} steps applied`);
+}
+
+function goForward() {
+  if (!state || state.cursor >= state.steps.length - 1) return false;
+  state.cursor++;
+  applyStepInc(state.steps[state.cursor]);
+  updateButtons();
+  return state.cursor < state.steps.length - 1;
+}
+
+function goBack() {
+  if (!state || state.cursor < 0) return;
+  pausePlay();
+  state.cursor--;
+  rebuildUpTo(state.cursor);
+  updateButtons();
+}
+
+function rewindAll() {
+  if (!state) return;
+  pausePlay();
+  state.cursor = -1;
+  rebuildUpTo(-1);
+  updateButtons();
+}
+
+function updateButtons() {
+  if (!state) return;
+  const atStart = state.cursor < 0;
+  const atEnd   = state.cursor >= state.steps.length - 1;
+  $('#back').disabled = atStart;
+  $('#step').disabled = atEnd;
+  $('#play').disabled = atEnd;
+  if (atEnd) pausePlay();
+}
+
+let playTimer = null;
+function play() {
+  if (!state) return;
+  if (playTimer) { pausePlay(); return; }
+  if (state.cursor >= state.steps.length - 1) return;
+  $('#play').textContent = 'Pause';
+  const tick = () => {
+    const speed = parseInt($('#speed').value, 10);
+    const more = goForward();
+    if (more) playTimer = setTimeout(tick, speed);
+    else pausePlay();
+  };
+  tick();
+}
+function pausePlay() {
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  $('#play').textContent = 'Play';
+}
+
+// ============================================================================
+// 4. Wiring
+// ============================================================================
+
+['#seqA', '#seqB', '#match', '#mismatch', '#gap', '#algo'].forEach(sel => {
+  $(sel).addEventListener('change', reset);
+});
+$('#reset').addEventListener('click', rewindAll);
+$('#back').addEventListener('click', goBack);
+$('#step').addEventListener('click', () => { pausePlay(); goForward(); });
+$('#play').addEventListener('click', play);
+
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input, select, textarea, button')) return;
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); goBack(); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); pausePlay(); goForward(); }
+  else if (e.key === ' ')     { e.preventDefault(); play(); }
+});
+
+const params = new URLSearchParams(location.search);
+if (params.has('algo')) $('#algo').value = params.get('algo');
+if (params.has('A'))    $('#seqA').value = params.get('A');
+if (params.has('B'))    $('#seqB').value = params.get('B');
+if (params.has('speed')) $('#speed').value = params.get('speed');
+reset();
+if (params.has('autoplay')) play();
+</script>
+</body>
+</html>

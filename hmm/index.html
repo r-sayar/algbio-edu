@@ -1,0 +1,657 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HMM Viterbi visualizer — CpG island detection</title>
+<style>
+  :root {
+    --bg: #fafafa;
+    --panel: #ffffff;
+    --ink: #1f2933;
+    --muted: #5d6b7a;
+    --grid: #e2e8f0;
+    --accent: #2563eb;
+    --accent-soft: #dbeafe;
+    --pair: #16a34a;
+    --pair-soft: #dcfce7;
+    --flash: #fde68a;
+    --bg-state: #fef3c7;       /* B background tint */
+    --island-state: #c7d2fe;   /* I island tint */
+  }
+  html, body {
+    margin: 0; padding: 0;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink); background: var(--bg);
+  }
+  header { padding: 16px 20px; border-bottom: 1px solid var(--grid); background: var(--panel); }
+  header h1 { margin: 0 0 4px 0; font-size: 18px; }
+  header p  { margin: 0; color: var(--muted); font-size: 13px; }
+  header a  { color: var(--accent); }
+
+  #controls {
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    padding: 12px 20px; background: var(--panel);
+    border-bottom: 1px solid var(--grid);
+  }
+  #controls label  { font-size: 13px; color: var(--muted); }
+  #controls select, #controls input[type=text], #controls button {
+    font: inherit; padding: 6px 10px;
+    border: 1px solid var(--grid); border-radius: 6px;
+    background: white; color: var(--ink);
+  }
+  #controls input[type=text] {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    width: 360px;
+  }
+  #controls button { cursor: pointer; }
+  #controls button.primary { background: var(--accent); color: white; border-color: var(--accent); }
+  #controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #status {
+    margin-left: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px; color: var(--muted);
+  }
+
+  main {
+    display: grid;
+    grid-template-columns: minmax(620px, 2fr) minmax(320px, 1fr);
+    gap: 16px;
+    padding: 16px 20px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--grid);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .panel h2 {
+    margin: 0 0 8px 0; font-size: 13px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .panel h2 .small { font-weight: 400; color: #94a3b8; text-transform: none; }
+  #panel-trellis  { grid-column: 1; grid-row: 1; overflow: auto; }
+  #panel-decoded  { grid-column: 1; grid-row: 2; }
+  #panel-params   { grid-column: 2; grid-row: 1 / span 2; }
+
+  /* Viterbi trellis */
+  table.trellis {
+    border-collapse: collapse;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+  }
+  table.trellis th, table.trellis td {
+    width: 56px; height: 38px;
+    text-align: center;
+    border: 1px solid var(--grid);
+    color: var(--ink);
+    vertical-align: middle;
+    position: relative;
+  }
+  table.trellis th { background: #f1f5f9; color: var(--muted); font-weight: 600; }
+  table.trellis th.symbol { font-size: 13px; color: var(--ink); }
+  table.trellis td.empty { color: #cbd5e1; }
+  table.trellis td.filled.state-B { background: color-mix(in srgb, var(--bg-state) calc((1 - var(--t, 0)) * 100%), #f59e0b calc(var(--t, 0) * 100%)); color: var(--ink); }
+  table.trellis td.filled.state-I { background: color-mix(in srgb, var(--island-state) calc((1 - var(--t, 0)) * 100%), var(--accent) calc(var(--t, 0) * 100%)); color: white; }
+  table.trellis td.current  { outline: 3px solid var(--flash); outline-offset: -3px; }
+  table.trellis td.path     { background: var(--pair) !important; color: white !important; font-weight: 600; }
+  table.trellis td .v       { font-size: 11px; line-height: 1.1; }
+  table.trellis td .bp      {
+    position: absolute; top: 2px; right: 4px; font-size: 9px;
+    color: rgba(0, 0, 0, 0.5);
+  }
+  table.trellis td.filled.state-I .bp { color: rgba(255, 255, 255, 0.7); }
+
+  /* parameter tables */
+  .params-block { margin-bottom: 16px; }
+  .params-block h3 { margin: 0 0 6px 0; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  table.params {
+    border-collapse: collapse;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+  }
+  table.params th, table.params td {
+    padding: 4px 8px; border: 1px solid var(--grid);
+    text-align: center; min-width: 38px;
+  }
+  table.params th { background: #f1f5f9; color: var(--muted); font-weight: 600; }
+  table.params td.label-B { background: var(--bg-state); }
+  table.params td.label-I { background: var(--island-state); }
+
+  /* decoded path strip */
+  #decoded {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 14px; line-height: 1.4;
+    white-space: pre;
+    overflow-x: auto;
+    padding: 8px 4px;
+  }
+  #decoded .row { display: flex; gap: 0; }
+  #decoded .ch  {
+    display: inline-block;
+    width: 20px;
+    text-align: center;
+    border-radius: 3px;
+    line-height: 22px;
+    height: 22px;
+  }
+  #decoded .ch.idx { color: var(--muted); font-size: 10px; height: 14px; line-height: 14px; }
+  #decoded .ch.B   { background: var(--bg-state); }
+  #decoded .ch.I   { background: var(--island-state); color: var(--ink); font-weight: 600; }
+  #decoded .ch.flash { outline: 2px solid var(--flash); outline-offset: -2px; }
+
+  .legend {
+    display: flex; gap: 14px; flex-wrap: wrap;
+    margin-top: 8px; font-size: 12px; color: var(--muted);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i {
+    width: 12px; height: 12px; border-radius: 3px; display: inline-block;
+    border: 1px solid var(--grid);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>HMM Viterbi visualizer — CpG island detection</h1>
+  <p>
+    Step through the <a href="https://en.wikipedia.org/wiki/Viterbi_algorithm">Viterbi</a> dynamic-programming
+    algorithm on a 2-state HMM (B = background, I = CpG island). The trellis fills column-by-column;
+    the traceback follows back-pointers from the final argmax to recover the most-likely state path.
+    Companion to the algorithm code at <a href="https://github.com/r-sayar/cpg-island-hmm">cpg-island-hmm</a>.
+  </p>
+</header>
+
+<div id="controls">
+  <label>Sequence:
+    <select id="preset"></select>
+  </label>
+  <input type="text" id="seq" value="ATATATATCGCGCGCGATATATAT" autocomplete="off">
+  <button id="reset" title="rewind to before any step">Reset</button>
+  <button id="back"  title="undo last step (←)">◀ Back</button>
+  <button id="play" class="primary" title="play / pause (space)">Play</button>
+  <button id="step"  title="advance one step (→)">Next ▶</button>
+  <label>Speed:
+    <select id="speed">
+      <option value="500">slow</option>
+      <option value="120" selected>medium</option>
+      <option value="20">fast</option>
+      <option value="2">turbo</option>
+    </select>
+  </label>
+  <span id="status">idle</span>
+</div>
+
+<main>
+  <section id="panel-trellis" class="panel">
+    <h2 id="trellis-title">Viterbi trellis &nbsp; <span class="small">V[state][position] = max log-prob ending in that state</span></h2>
+    <div id="trellis-host"></div>
+    <div class="legend">
+      <span><i style="background: var(--bg-state)"></i>state B (background)</span>
+      <span><i style="background: var(--island-state)"></i>state I (island)</span>
+      <span><i style="background: var(--flash)"></i>current cell</span>
+      <span><i style="background: var(--pair)"></i>traceback path</span>
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin:8px 0 0 0">
+      Top-right corner of each cell shows the back-pointer arrow (← from B, ↖ from I).
+      Cell value = log-probability (more negative = less likely).
+    </p>
+  </section>
+
+  <section id="panel-decoded" class="panel">
+    <h2>Decoded path &nbsp; <span class="small">most-likely state sequence (Viterbi)</span></h2>
+    <div id="decoded"></div>
+  </section>
+
+  <section id="panel-params" class="panel">
+    <h2>HMM parameters</h2>
+
+    <div class="params-block">
+      <h3>Initial probabilities π</h3>
+      <table class="params">
+        <thead><tr><th></th><th>B</th><th>I</th></tr></thead>
+        <tbody><tr><th>π</th><td>0.50</td><td>0.50</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="params-block">
+      <h3>Transition matrix A</h3>
+      <table class="params">
+        <thead><tr><th>from \ to</th><th>B</th><th>I</th></tr></thead>
+        <tbody>
+          <tr><td class="label-B">B</td><td>0.90</td><td>0.10</td></tr>
+          <tr><td class="label-I">I</td><td>0.20</td><td>0.80</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="params-block">
+      <h3>Emission matrix E</h3>
+      <table class="params">
+        <thead><tr><th>state</th><th>A</th><th>C</th><th>G</th><th>T</th></tr></thead>
+        <tbody>
+          <tr><td class="label-B">B</td><td>0.40</td><td>0.10</td><td>0.10</td><td>0.40</td></tr>
+          <tr><td class="label-I">I</td><td>0.10</td><td>0.40</td><td>0.40</td><td>0.10</td></tr>
+        </tbody>
+      </table>
+      <p style="font-size:11px;color:var(--muted);margin:4px 0 0 0">
+        Background prefers A/T; island prefers C/G. (Real CpG-island HMMs use 8 emitting states
+        for dinucleotide context — this 2-state version captures the core idea.)
+      </p>
+    </div>
+
+    <div class="params-block">
+      <h3>Recurrence</h3>
+      <pre style="font-size:11px;background:#f8fafc;padding:8px;border-radius:4px;margin:0;color:var(--ink)">V[s][0] = log π[s] + log e[s][x₀]
+V[s][i] = max_t (V[t][i-1] + log a[t][s])
+        + log e[s][x_i]
+backptr[s][i] = argmax_t above
+path: traceback from argmax_s V[s][n-1]</pre>
+    </div>
+  </section>
+</main>
+
+<script>
+// ============================================================================
+// 1. HMM definition (2-state CpG-island toy)
+// ============================================================================
+
+const STATES = ['B', 'I'];                 // B = background, I = island
+const ALPHABET = ['A', 'C', 'G', 'T'];
+const SYM_IDX = { A: 0, C: 1, G: 2, T: 3 };
+
+// initial
+const PI = [0.5, 0.5];
+// transition[from][to] — soft enough that islands of length ≥4 can pay off
+const A = [
+  [0.90, 0.10],   // from B
+  [0.20, 0.80],   // from I
+];
+// emission[state][symbol] — strong AT vs CG contrast for visible signal
+// (real CpG-island HMMs use 8 emitting states for dinucleotide context;
+// this 2-state version exaggerates contrasts so the algorithm's behaviour
+// is easy to read on small toy sequences)
+const E = [
+  [0.40, 0.10, 0.10, 0.40],   // B prefers A/T
+  [0.10, 0.40, 0.40, 0.10],   // I prefers C/G
+];
+
+// log-domain so we can sum instead of multiply
+const log = Math.log;
+const logPi  = PI.map(log);
+const logA   = A.map(row => row.map(log));
+const logE   = E.map(row => row.map(log));
+
+// ============================================================================
+// 2. Viterbi as a step generator
+// ============================================================================
+//
+// Each next() yields:
+//   { phase: 'fill', i, s, value, bp }      — V[s][i] just computed
+//   { phase: 'traceback', kind: 'argmax', i, s }    — picked final state
+//   { phase: 'traceback', kind: 'follow',  i, s }    — followed bp from i to i-1
+//   { phase: 'done', path }
+// ============================================================================
+
+function* viterbiSteps(seq) {
+  const n = seq.length;
+  if (n === 0) { yield { phase: 'done', path: [] }; return; }
+
+  // V[s][i], BP[s][i]
+  const V  = STATES.map(() => new Array(n).fill(-Infinity));
+  const BP = STATES.map(() => new Array(n).fill(-1));
+
+  // ---- column 0: initial ----
+  for (let s = 0; s < STATES.length; s++) {
+    const sym = SYM_IDX[seq[0]];
+    if (sym === undefined) { V[s][0] = -Infinity; }
+    else                   { V[s][0] = logPi[s] + logE[s][sym]; }
+    BP[s][0] = -1;
+    yield { phase: 'fill', i: 0, s, value: V[s][0], bp: -1 };
+  }
+
+  // ---- columns 1..n-1: recursive ----
+  for (let i = 1; i < n; i++) {
+    const sym = SYM_IDX[seq[i]];
+    for (let s = 0; s < STATES.length; s++) {
+      let bestPrev = 0;
+      let bestVal  = V[0][i-1] + logA[0][s];
+      for (let t = 1; t < STATES.length; t++) {
+        const cand = V[t][i-1] + logA[t][s];
+        if (cand > bestVal) { bestVal = cand; bestPrev = t; }
+      }
+      V[s][i]  = (sym === undefined) ? -Infinity : bestVal + logE[s][sym];
+      BP[s][i] = bestPrev;
+      yield { phase: 'fill', i, s, value: V[s][i], bp: bestPrev };
+    }
+  }
+
+  // ---- traceback: pick last column argmax, follow BP backwards ----
+  let endS = 0;
+  for (let s = 1; s < STATES.length; s++) {
+    if (V[s][n-1] > V[endS][n-1]) endS = s;
+  }
+  yield { phase: 'traceback', kind: 'argmax', i: n - 1, s: endS };
+
+  const path = new Array(n);
+  path[n-1] = endS;
+  for (let i = n - 1; i > 0; i--) {
+    const prev = BP[path[i]][i];
+    path[i-1] = prev;
+    yield { phase: 'traceback', kind: 'follow', i: i - 1, s: prev };
+  }
+
+  yield { phase: 'done', path };
+}
+
+// ============================================================================
+// 3. Rendering
+// ============================================================================
+
+const $ = sel => document.querySelector(sel);
+
+function buildTrellis(seq) {
+  const host = $('#trellis-host');
+  host.innerHTML = '';
+  const tbl = document.createElement('table');
+  tbl.className = 'trellis';
+
+  const thead = document.createElement('thead');
+  // index row
+  let hr = document.createElement('tr');
+  hr.appendChild(document.createElement('th'));
+  for (let i = 0; i < seq.length; i++) {
+    const th = document.createElement('th');
+    th.textContent = i;
+    hr.appendChild(th);
+  }
+  thead.appendChild(hr);
+  // symbol row
+  hr = document.createElement('tr');
+  hr.appendChild(document.createElement('th'));
+  for (const ch of seq) {
+    const th = document.createElement('th'); th.className = 'symbol';
+    th.textContent = ch; hr.appendChild(th);
+  }
+  thead.appendChild(hr);
+  tbl.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  for (let s = 0; s < STATES.length; s++) {
+    const tr = document.createElement('tr');
+    const lh = document.createElement('th');
+    lh.textContent = STATES[s];
+    lh.style.background = s === 0 ? 'var(--bg-state)' : 'var(--island-state)';
+    lh.style.color = 'var(--ink)';
+    tr.appendChild(lh);
+    for (let i = 0; i < seq.length; i++) {
+      const td = document.createElement('td');
+      td.id = `c-${s}-${i}`;
+      td.className = 'empty';
+      td.innerHTML = '<span class="v">·</span>';
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  tbl.appendChild(tbody);
+  host.appendChild(tbl);
+}
+
+function buildDecoded(seq) {
+  const host = $('#decoded'); host.innerHTML = '';
+  // index ruler
+  const ruler = document.createElement('div'); ruler.className = 'row';
+  for (let i = 0; i < seq.length; i++) {
+    const c = document.createElement('span'); c.className = 'ch idx';
+    c.textContent = (i % 5 === 0) ? String(i) : '';
+    ruler.appendChild(c);
+  }
+  host.appendChild(ruler);
+  // sequence row
+  const seqRow = document.createElement('div'); seqRow.className = 'row';
+  for (const b of seq) {
+    const c = document.createElement('span'); c.className = 'ch';
+    c.textContent = b; seqRow.appendChild(c);
+  }
+  host.appendChild(seqRow);
+  // path row (initially blank)
+  const pathRow = document.createElement('div'); pathRow.className = 'row'; pathRow.id = 'pathrow';
+  for (let i = 0; i < seq.length; i++) {
+    const c = document.createElement('span'); c.className = 'ch'; c.id = `p-${i}`;
+    c.textContent = '·';
+    pathRow.appendChild(c);
+  }
+  host.appendChild(pathRow);
+}
+
+function paintCell(s, i, value, bp, range) {
+  const td = document.getElementById(`c-${s}-${i}`);
+  if (!td) return;
+  td.classList.remove('empty');
+  td.classList.add('filled');
+  td.classList.add(`state-${STATES[s]}`);
+
+  const display = value === -Infinity ? '−∞' : value.toFixed(2);
+  const arrow = bp === -1 ? '·' : (bp === 0 ? '←' : '↖');
+  td.innerHTML = `<span class="v">${display}</span><span class="bp">${arrow}</span>`;
+
+  // Heatmap: more "good" (closer to max log-prob) → more saturated.
+  // log-probs are <= 0; max ≈ 0 (best), min ≈ -∞ (worst).
+  if (value > -Infinity && range.max > -Infinity) {
+    const span = range.max - range.min;
+    const t = span > 0 ? Math.max(0, (value - range.min) / span) : 0;
+    td.style.setProperty('--t', t.toFixed(2));
+  }
+}
+
+function flashCell(s, i) {
+  const td = document.getElementById(`c-${s}-${i}`);
+  if (!td) return;
+  document.querySelectorAll('td.current').forEach(e => e.classList.remove('current'));
+  td.classList.add('current');
+}
+
+function markPath(s, i) {
+  const td = document.getElementById(`c-${s}-${i}`);
+  if (td) td.classList.add('path');
+  const ch = document.getElementById(`p-${i}`);
+  if (ch) {
+    ch.textContent = STATES[s];
+    ch.classList.remove('B', 'I');
+    ch.classList.add(STATES[s]);
+  }
+}
+
+function clearPath() {
+  document.querySelectorAll('td.path').forEach(e => e.classList.remove('path'));
+  document.querySelectorAll('#pathrow .ch').forEach(c => {
+    c.textContent = '·';
+    c.classList.remove('B', 'I', 'flash');
+  });
+}
+
+function setStatus(msg) { $('#status').textContent = msg; }
+
+// ============================================================================
+// 4. Step driver — same cursor model as the RNA visualizer
+// ============================================================================
+
+let state = null;
+
+function reset() {
+  pausePlay();
+  let seq = $('#seq').value.trim().toUpperCase().replace(/U/g, 'T');
+  if (!/^[ACGT]+$/.test(seq) || seq.length < 1) {
+    setStatus('invalid sequence (use A/C/G/T)');
+    return;
+  }
+  // truncate to keep the trellis readable; warn if user wanted longer
+  if (seq.length > 60) {
+    setStatus(`sequence trimmed to first 60 nt (was ${seq.length})`);
+    seq = seq.slice(0, 60);
+    $('#seq').value = seq;
+  }
+  const steps = [];
+  for (const s of viterbiSteps(seq)) steps.push(s);
+
+  state = {
+    seq,
+    steps,
+    cursor: -1,
+    range: { min: 0, max: -Infinity },   // grows as cells are computed
+  };
+
+  buildTrellis(seq);
+  buildDecoded(seq);
+  setStatus(`ready — ${seq.length} nt, ${steps.length} total steps`);
+  updateButtons();
+}
+
+function applyStepInc(step) {
+  if (step.phase === 'fill') {
+    if (step.value > -Infinity) {
+      if (step.value > state.range.max) state.range.max = step.value;
+      if (step.value < state.range.min) state.range.min = step.value;
+    }
+    paintCell(step.s, step.i, step.value, step.bp, state.range);
+    flashCell(step.s, step.i);
+    setStatus(`fill V[${STATES[step.s]}][${step.i}] = ${step.value === -Infinity ? '−∞' : step.value.toFixed(2)}`);
+    return;
+  }
+  if (step.phase === 'traceback') {
+    if (step.kind === 'argmax') {
+      markPath(step.s, step.i);
+      setStatus(`traceback start — argmax at i=${step.i} → state ${STATES[step.s]}`);
+    } else {
+      markPath(step.s, step.i);
+      setStatus(`traceback follow ↖/← to i=${step.i} → state ${STATES[step.s]}`);
+    }
+    return;
+  }
+  if (step.phase === 'done') {
+    const path = step.path.map(s => STATES[s]).join('');
+    setStatus(`done — Viterbi path: ${path}`);
+  }
+}
+
+function rebuildUpTo(idx) {
+  buildTrellis(state.seq);
+  buildDecoded(state.seq);
+  state.range = { min: 0, max: -Infinity };
+  for (let i = 0; i <= idx; i++) applyStepInc(state.steps[i]);
+  if (idx < 0) setStatus(`reset — 0 of ${state.steps.length} steps applied`);
+}
+
+function goForward() {
+  if (!state || state.cursor >= state.steps.length - 1) return false;
+  state.cursor++;
+  applyStepInc(state.steps[state.cursor]);
+  updateButtons();
+  return state.cursor < state.steps.length - 1;
+}
+
+function goBack() {
+  if (!state || state.cursor < 0) return;
+  pausePlay();
+  state.cursor--;
+  rebuildUpTo(state.cursor);
+  updateButtons();
+}
+
+function rewindAll() {
+  if (!state) return;
+  pausePlay();
+  state.cursor = -1;
+  rebuildUpTo(-1);
+  updateButtons();
+}
+
+function updateButtons() {
+  if (!state) return;
+  const atStart = state.cursor < 0;
+  const atEnd   = state.cursor >= state.steps.length - 1;
+  $('#back').disabled = atStart;
+  $('#step').disabled = atEnd;
+  $('#play').disabled = atEnd;
+  if (atEnd) pausePlay();
+}
+
+let playTimer = null;
+function play() {
+  if (!state) return;
+  if (playTimer) { pausePlay(); return; }
+  if (state.cursor >= state.steps.length - 1) return;
+  $('#play').textContent = 'Pause';
+  const tick = () => {
+    const speed = parseInt($('#speed').value, 10);
+    const more = goForward();
+    if (more) playTimer = setTimeout(tick, speed);
+    else pausePlay();
+  };
+  tick();
+}
+function pausePlay() {
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  $('#play').textContent = 'Play';
+}
+
+// ============================================================================
+// 5. Presets and wiring
+// ============================================================================
+
+const PRESETS = [
+  { label: 'tiny mixed (8 nt)',          seq: 'ACGTACGT' },
+  { label: 'AT… CG island … AT (24 nt)', seq: 'ATATATATCGCGCGCGATATATAT' },
+  { label: 'short island in long AT (40 nt)', seq: 'ATATATATATCGCGCGCGCGATATATATATATATATATAT' },
+  { label: 'long mostly-AT with two islands (60 nt)', seq: 'ATATATATCGCGCGCGATATATATATATATATCGCGCGCGCGATATATATATATATATAT' },
+];
+
+function populatePresets(defaultIdx) {
+  const sel = $('#preset'); sel.innerHTML = '';
+  PRESETS.forEach((p, i) => {
+    const o = document.createElement('option');
+    o.value = String(i); o.textContent = p.label;
+    if (i === defaultIdx) o.selected = true;
+    sel.appendChild(o);
+  });
+  const o = document.createElement('option');
+  o.value = 'custom'; o.textContent = 'custom…';
+  sel.appendChild(o);
+}
+
+function applyPreset(idx) {
+  if (idx === 'custom') return;
+  const p = PRESETS[parseInt(idx, 10)];
+  if (!p) return;
+  $('#seq').value = p.seq;
+  reset();
+}
+
+populatePresets(1);
+$('#preset').addEventListener('change', () => applyPreset($('#preset').value));
+$('#seq').addEventListener('change', () => { $('#preset').value = 'custom'; reset(); });
+$('#reset').addEventListener('click', rewindAll);
+$('#back').addEventListener('click', goBack);
+$('#step').addEventListener('click', () => { pausePlay(); goForward(); });
+$('#play').addEventListener('click', play);
+
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input, select, textarea, button')) return;
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); goBack(); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); pausePlay(); goForward(); }
+  else if (e.key === ' ')     { e.preventDefault(); play(); }
+});
+
+const params = new URLSearchParams(location.search);
+if (params.has('speed')) $('#speed').value = params.get('speed');
+if (params.has('seq')) {
+  $('#seq').value = params.get('seq');
+  $('#preset').value = 'custom';
+  reset();
+} else {
+  applyPreset($('#preset').value);
+}
+if (params.has('autoplay')) play();
+</script>
+</body>
+</html>
