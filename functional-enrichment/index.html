@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Functional Enrichment — interactive visualizer</title>
+<style>
+  :root {
+    --bg: #fafafa; --panel: #ffffff; --ink: #1f2933; --muted: #5d6b7a;
+    --grid: #e2e8f0; --accent: #2563eb; --accent-soft: #dbeafe;
+    --pair: #16a34a; --pair-soft: #dcfce7;
+    --orange: #f97316; --orange-soft: #fed7aa;
+    --rose: #e11d48; --slate: #475569;
+    --red-soft: #fee2e2;
+  }
+  html, body { margin:0; padding:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; color:var(--ink); background:var(--bg); }
+  header { padding:14px 20px; border-bottom:1px solid var(--grid); background:var(--panel); }
+  header h1 { margin:0 0 3px; font-size:18px; }
+  header p  { margin:0; color:var(--muted); font-size:13px; }
+  header a  { color:var(--accent); }
+  header b  { color:var(--ink); }
+
+  #controls {
+    display:flex; gap:14px; align-items:center; flex-wrap:wrap;
+    padding:10px 20px; background:var(--panel); border-bottom:1px solid var(--grid);
+  }
+  .ctrl { display:flex; align-items:center; gap:5px; }
+  .ctrl label { font-size:12px; color:var(--muted); white-space:nowrap; }
+  .ctrl input[type=range] { width:110px; accent-color:var(--accent); }
+  .ctrl input[type=number] {
+    width:64px; padding:3px 5px; border:1px solid var(--grid); border-radius:4px;
+    font:inherit; font-family:ui-monospace,Menlo,monospace; text-align:right; font-size:12px;
+  }
+  button {
+    cursor:pointer; padding:5px 10px; border:1px solid var(--grid); border-radius:4px;
+    background:white; color:var(--ink); font:inherit; font-size:12px;
+  }
+  button:hover { background:var(--accent-soft); }
+  button.primary { background:var(--accent); color:white; border-color:var(--accent); }
+  button.active  { background:var(--accent); color:white; border-color:var(--accent); }
+
+  main {
+    display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.5fr);
+    gap:14px; padding:14px 20px;
+  }
+  .panel {
+    background:var(--panel); border:1px solid var(--grid); border-radius:8px;
+    padding:14px;
+  }
+  .panel h2 { margin:0 0 10px; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+
+  /* contingency table */
+  #ct-wrap { overflow-x:auto; }
+  table.ct {
+    border-collapse:collapse; width:100%; font-size:13px;
+  }
+  table.ct th, table.ct td {
+    border:1px solid var(--grid); padding:6px 10px; text-align:center;
+  }
+  table.ct th { background:#f1f5f9; font-weight:600; color:var(--muted); }
+  table.ct td.obs { font-weight:700; font-size:15px; }
+  table.ct td.exp { font-size:11px; color:var(--muted); }
+  td.highlight { background:var(--accent-soft); }
+  td.highlight.obs { color:var(--accent); }
+
+  #stats { margin-top:12px; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .stat-box {
+    border:1px solid var(--grid); border-radius:6px; padding:8px 10px;
+  }
+  .stat-box .label { font-size:11px; color:var(--muted); }
+  .stat-box .value { font-size:18px; font-weight:700; margin-top:2px; }
+  .sig-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+  .stat-box .sig { font-size:12px; margin-top:4px; }
+
+  canvas { display:block; width:100%; }
+  #gsea-controls { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+  #gsea-controls label { font-size:12px; color:var(--muted); }
+
+  @media (max-width:800px) {
+    main { grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Functional Enrichment — interactive visualizer</h1>
+  <p>Over-representation analysis via <b>Fisher's exact test</b> (hypergeometric distribution) and <b>GSEA random walk</b>.
+     Companion: <a href="..">algbio-edu</a>.</p>
+</header>
+
+<div id="controls">
+  <div class="ctrl">
+    <label>N (genome)</label>
+    <input type="range" id="N-sl" min="1000" max="30000" step="100" value="10000">
+    <input type="number" id="N-num" min="1000" max="30000" step="100" value="10000">
+  </div>
+  <div class="ctrl">
+    <label>K (pathway genes)</label>
+    <input type="range" id="K-sl" min="10" max="3000" step="10" value="1400">
+    <input type="number" id="K-num" min="10" max="3000" step="10" value="1400">
+  </div>
+  <div class="ctrl">
+    <label>n (DEGs)</label>
+    <input type="range" id="n-sl" min="10" max="3000" step="10" value="1000">
+    <input type="number" id="n-num" min="10" max="3000" step="10" value="1000">
+  </div>
+  <div class="ctrl">
+    <label>k (overlap)</label>
+    <input type="range" id="k-sl" min="0" max="1000" step="1" value="200">
+    <input type="number" id="k-num" min="0" max="1000" step="1" value="200">
+  </div>
+</div>
+
+<main>
+  <!-- LEFT: contingency table + stats -->
+  <div class="panel">
+    <h2>Contingency Table &amp; Fisher's Exact Test</h2>
+    <div id="ct-wrap">
+      <table class="ct" id="ct">
+        <thead>
+          <tr>
+            <th></th>
+            <th>In pathway</th>
+            <th>Not in pathway</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th>DEG</th>
+            <td class="highlight obs" id="c-k">—</td>
+            <td class="obs" id="c-nk">—</td>
+            <td class="obs" id="c-n">—</td>
+          </tr>
+          <tr>
+            <th style="font-weight:400;color:var(--muted)">Expected (H₀)</th>
+            <td class="exp highlight" id="c-ek">—</td>
+            <td class="exp" id="c-enk">—</td>
+            <td class="exp" id="c-en">—</td>
+          </tr>
+          <tr>
+            <th>Not DEG</th>
+            <td class="obs" id="c-Kk">—</td>
+            <td class="obs" id="c-rest">—</td>
+            <td class="obs" id="c-Nn">—</td>
+          </tr>
+          <tr>
+            <th>Total</th>
+            <td class="obs" id="c-K">—</td>
+            <td class="obs" id="c-NK">—</td>
+            <td class="obs" id="c-N">—</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div id="stats">
+      <div class="stat-box">
+        <div class="label">One-sided p-value  P(X ≥ k)</div>
+        <div class="value" id="s-p1">—</div>
+        <div class="sig" id="s-sig1">—</div>
+      </div>
+      <div class="stat-box">
+        <div class="label">Two-sided p-value</div>
+        <div class="value" id="s-p2">—</div>
+        <div class="sig" id="s-sig2">—</div>
+      </div>
+      <div class="stat-box">
+        <div class="label">Odds ratio</div>
+        <div class="value" id="s-or">—</div>
+        <div class="sig" style="color:var(--muted);font-size:11px" id="s-or-note">k(N−n−(K−k)) / (n−k)(K−k)</div>
+      </div>
+      <div class="stat-box">
+        <div class="label">Expected overlap E[X]</div>
+        <div class="value" id="s-ex">—</div>
+        <div class="sig" style="color:var(--muted);font-size:11px">n·K/N under H₀</div>
+      </div>
+    </div>
+
+    <div style="margin-top:14px;">
+      <h2>Hypergeometric PMF  —  P(X = x)</h2>
+      <canvas id="hyper-canvas" height="150"></canvas>
+      <p style="font-size:11px;color:var(--muted);margin:4px 0 0;">
+        Blue bars: x &lt; k. <span style="color:var(--accent);font-weight:600">Accent bars: x ≥ k</span> (shaded tail = one-sided p-value).
+        Dashed line = observed k. ◀▶ arrow keys adjust k.
+      </p>
+    </div>
+  </div>
+
+  <!-- RIGHT: GSEA -->
+  <div class="panel">
+    <h2>GSEA Random Walk  —  Enrichment Score ES(S)</h2>
+    <div id="gsea-controls">
+      <label>Gene-set fraction f</label>
+      <input type="range" id="f-sl" min="0.02" max="0.5" step="0.01" value="0.15" style="width:100px;accent-color:var(--accent)">
+      <input type="number" id="f-num" min="0.02" max="0.5" step="0.01" value="0.15" style="width:56px;padding:3px 5px;border:1px solid var(--grid);border-radius:4px;font:inherit;font-size:12px">
+      <button id="btn-enriched" class="active">Enriched</button>
+      <button id="btn-null">Null (random)</button>
+      <button id="btn-resample" class="primary">Resample ↺</button>
+    </div>
+    <canvas id="gsea-canvas" height="220"></canvas>
+    <p style="font-size:11px;color:var(--muted);margin:6px 0 0;">
+      Ranked gene list (left = top correlation with phenotype). Black bars: gene-set members.
+      <span style="color:var(--accent);font-weight:600">Red curve</span>: running enrichment score.
+      <b>ES(S)</b> = maximum deviation from zero.
+      In <em>Enriched</em> mode gene-set members cluster near the top.
+    </p>
+
+    <div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+
+      <!-- ORA / Fisher block -->
+      <div style="border:1px solid var(--grid);border-radius:6px;padding:10px 12px;">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">ORA — Fisher's Exact Test</div>
+        <div style="font-size:12px;line-height:1.6;font-family:ui-monospace,Menlo,monospace;background:#f8fafc;border-radius:4px;padding:8px 10px;margin-bottom:8px;">
+          <div style="color:var(--muted);font-style:italic;font-family:inherit;">// Hypergeometric PMF</div>
+          <div>P(X = k) =</div>
+          <div style="padding-left:12px;">C(K, k) · C(N−K, n−k)</div>
+          <div style="padding-left:12px;border-top:1px solid #cbd5e1;margin-top:2px;padding-top:2px;">C(N, n)</div>
+          <div style="margin-top:8px;color:var(--muted);font-style:italic;font-family:inherit;">// One-sided p-value</div>
+          <div>p = Σ<sub style="font-family:inherit">i=k..min(K,n)</sub> P(X = i)</div>
+          <div style="margin-top:8px;color:var(--muted);font-style:italic;font-family:inherit;">// Expected overlap under H₀</div>
+          <div>E[X] = n · K / N</div>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+          <tr style="background:#f1f5f9;">
+            <th style="border:1px solid var(--grid);padding:3px 6px;text-align:left;font-family:monospace">sym</th>
+            <th style="border:1px solid var(--grid);padding:3px 6px;text-align:left;">meaning</th>
+          </tr>
+          <tr><td style="border:1px solid var(--grid);padding:2px 6px;font-family:monospace">N</td><td style="border:1px solid var(--grid);padding:2px 6px;">total genes in genome</td></tr>
+          <tr><td style="border:1px solid var(--grid);padding:2px 6px;font-family:monospace">K</td><td style="border:1px solid var(--grid);padding:2px 6px;">genes in pathway</td></tr>
+          <tr><td style="border:1px solid var(--grid);padding:2px 6px;font-family:monospace">n</td><td style="border:1px solid var(--grid);padding:2px 6px;">total DEGs (draws)</td></tr>
+          <tr><td style="border:1px solid var(--grid);padding:2px 6px;font-family:monospace">k</td><td style="border:1px solid var(--grid);padding:2px 6px;">DEGs ∩ pathway (observed)</td></tr>
+        </table>
+        <div style="margin-top:8px;font-size:11px;color:var(--muted);">
+          <strong>Fisher vs χ²:</strong> use Fisher when any E<sub>i</sub> &lt; 5; χ² = Σ(O−E)²/E otherwise (df = (r−1)(c−1), critical value χ²(1, 0.95) = 3.841).
+        </div>
+      </div>
+
+      <!-- GSEA block -->
+      <div style="border:1px solid var(--grid);border-radius:6px;padding:10px 12px;">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">GSEA — Random Walk</div>
+        <div style="font-size:12px;line-height:1.6;font-family:ui-monospace,Menlo,monospace;background:#f8fafc;border-radius:4px;padding:8px 10px;margin-bottom:8px;">
+          <div style="color:var(--muted);font-style:italic;font-family:inherit;">// Rank all genes by fold-change</div>
+          <div>score ← 0</div>
+          <div><b>for</b> gene_i <b>in</b> ranked_list:</div>
+          <div style="padding-left:16px;"><b>if</b> gene_i ∈ S:</div>
+          <div style="padding-left:32px;">score += <span style="color:var(--accent)">1 / |S|</span></div>
+          <div style="padding-left:16px;"><b>else</b>:</div>
+          <div style="padding-left:32px;">score −= <span style="color:var(--rose)">1 / (N − |S|)</span></div>
+          <div style="margin-top:6px;">ES(S) = max<sub style="font-family:inherit">i</sub>(score)</div>
+          <div style="margin-top:6px;color:var(--muted);font-style:italic;font-family:inherit;">// Significance via permutation</div>
+          <div>NES = ES(S) / E[ES<sub style="font-family:inherit">perm</sub>]</div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.5;">
+          <b>S</b> = gene set, <b>N</b> = ranked list length, <b>|S|</b> = set size.<br>
+          Large positive ES → set members cluster near top (enriched in condition A).<br>
+          <b>Leading edge</b> = genes in S above the ES peak.<br>
+          Apply BH-FDR across all tested gene sets.
+        </div>
+      </div>
+
+    </div>
+  </div>
+</main>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+
+// ── State ──────────────────────────────────────────────────────────────────
+let N = 10000, K = 1400, n = 1000, k = 200;
+let f = 0.15, enrichedMode = true;
+let gseaPositions = [];   // positions (0..1) of gene-set members in ranked list
+
+// ── Math helpers ───────────────────────────────────────────────────────────
+function logFact(n) {
+  // Stirling approximation for large n; exact for small
+  if (n <= 1) return 0;
+  let s = 0;
+  for (let i = 2; i <= n; i++) s += Math.log(i);
+  return s;
+}
+
+// log C(n, k)
+function logC(n, k) {
+  if (k < 0 || k > n) return -Infinity;
+  if (k === 0 || k === n) return 0;
+  return logFact(n) - logFact(k) - logFact(n - k);
+}
+
+// Hypergeometric PMF in log-space
+function logHyperPMF(N, K, n, x) {
+  return logC(K, x) + logC(N - K, n - x) - logC(N, n);
+}
+
+// Compute full PMF array for x in [xMin, xMax]
+function hyperPMF(N, K, n) {
+  const xMin = Math.max(0, n - (N - K));
+  const xMax = Math.min(K, n);
+  const pmf = [];
+  for (let x = xMin; x <= xMax; x++) {
+    pmf.push({ x, p: Math.exp(logHyperPMF(N, K, n, x)) });
+  }
+  return pmf;
+}
+
+// One-sided p-value P(X >= k)
+function pOneSided(N, K, n, k) {
+  const xMax = Math.min(K, n);
+  if (k > xMax) return 0;
+  let lp = -Infinity;
+  for (let x = k; x <= xMax; x++) {
+    const lx = logHyperPMF(N, K, n, x);
+    // log-sum-exp
+    if (lx === -Infinity) continue;
+    if (lp === -Infinity) { lp = lx; continue; }
+    const m = Math.max(lp, lx);
+    lp = m + Math.log(1 + Math.exp(Math.min(lp, lx) - m));
+  }
+  return Math.exp(lp);
+}
+
+// Two-sided: sum all outcomes with P <= P(X=k)
+function pTwoSided(N, K, n, k) {
+  const xMin = Math.max(0, n - (N - K));
+  const xMax = Math.min(K, n);
+  const threshold = Math.exp(logHyperPMF(N, K, n, k));
+  let total = 0;
+  for (let x = xMin; x <= xMax; x++) {
+    const p = Math.exp(logHyperPMF(N, K, n, x));
+    if (p <= threshold + 1e-12) total += p;
+  }
+  return Math.min(1, total);
+}
+
+function fmtP(p) {
+  if (p < 1e-300) return '< 10⁻³⁰⁰';
+  if (p < 0.001) return p.toExponential(2);
+  return p.toFixed(4);
+}
+
+function sigInfo(p) {
+  if (p < 0.001) return { color: '#16a34a', label: '*** p < 0.001' };
+  if (p < 0.01)  return { color: '#16a34a', label: '**  p < 0.01' };
+  if (p < 0.05)  return { color: '#16a34a', label: '*   p < 0.05' };
+  if (p < 0.2)   return { color: '#f97316', label: '·   p < 0.20' };
+  return { color: '#e11d48', label: 'ns  p ≥ 0.20' };
+}
+
+// ── Canvas helpers ─────────────────────────────────────────────────────────
+function setupCanvas(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  const w = Math.floor(rect.width) - 28;  // padding
+  const h = parseInt(canvas.getAttribute('height'));
+  canvas.width  = w * dpr;
+  canvas.height = h * dpr;
+  canvas.style.width  = w + 'px';
+  canvas.style.height = h + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  return { ctx, w, h };
+}
+
+// ── Render contingency table ───────────────────────────────────────────────
+function renderTable() {
+  const kk = Math.max(0, Math.min(k, Math.min(K, n)));
+  const nk  = n - kk;
+  const Kk  = K - kk;
+  const rest = N - n - Kk;
+  const ex  = (n * K / N).toFixed(1);
+  const enk = (n * (N - K) / N).toFixed(1);
+
+  $('c-k').textContent   = kk;
+  $('c-nk').textContent  = nk;
+  $('c-n').textContent   = n;
+  $('c-ek').textContent  = `E = ${ex}`;
+  $('c-enk').textContent = `E = ${enk}`;
+  $('c-en').textContent  = '';
+  $('c-Kk').textContent  = Math.max(0, Kk);
+  $('c-rest').textContent = Math.max(0, rest);
+  $('c-Nn').textContent  = N - n;
+  $('c-K').textContent   = K;
+  $('c-NK').textContent  = N - K;
+  $('c-N').textContent   = N;
+
+  // stats
+  const p1 = pOneSided(N, K, n, kk);
+  const p2 = pTwoSided(N, K, n, kk);
+  const EX = n * K / N;
+  let OR = '—';
+  const denom = nk * Kk;
+  if (denom > 0) OR = (kk * Math.max(0, rest) / denom).toFixed(2);
+
+  $('s-p1').textContent = fmtP(p1);
+  $('s-p2').textContent = fmtP(p2);
+  $('s-or').textContent = OR;
+  $('s-ex').textContent = EX.toFixed(1);
+
+  const si1 = sigInfo(p1), si2 = sigInfo(p2);
+  $('s-sig1').innerHTML = `<span class="sig-dot" style="background:${si1.color}"></span>${si1.label}`;
+  $('s-sig2').innerHTML = `<span class="sig-dot" style="background:${si2.color}"></span>${si2.label}`;
+}
+
+// ── Render hypergeometric PMF ──────────────────────────────────────────────
+function renderHyper() {
+  const canvas = $('hyper-canvas');
+  const { ctx, w, h } = setupCanvas(canvas);
+
+  const pmf = hyperPMF(N, K, n);
+  if (pmf.length === 0) return;
+
+  const pad = { top: 18, right: 16, bottom: 36, left: 48 };
+  const pw = w - pad.left - pad.right;
+  const ph = h - pad.top - pad.bottom;
+
+  const maxP = Math.max(...pmf.map(d => d.p), 1e-12);
+  const xMin = pmf[0].x;
+  const xMax = pmf[pmf.length - 1].x;
+  const range = xMax - xMin || 1;
+
+  // thin bars if many values
+  const barW = Math.max(1, Math.floor(pw / (pmf.length + 1)));
+
+  ctx.clearRect(0, 0, w, h);
+
+  // grid lines
+  ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + ph - (i / 4) * ph;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + pw, y); ctx.stroke();
+  }
+
+  // bars
+  for (const { x, p } of pmf) {
+    const bx = pad.left + ((x - xMin) / range) * pw - barW / 2;
+    const bh = (p / maxP) * ph;
+    const by = pad.top + ph - bh;
+    ctx.fillStyle = x >= k ? '#2563eb' : '#93c5fd';
+    ctx.fillRect(bx, by, Math.max(barW - 1, 1), bh);
+  }
+
+  // dashed vertical at k
+  if (k >= xMin && k <= xMax) {
+    const kx = pad.left + ((k - xMin) / range) * pw;
+    ctx.save();
+    ctx.strokeStyle = '#1e40af'; ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(kx, pad.top); ctx.lineTo(kx, pad.top + ph); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#1e40af'; ctx.font = '11px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText(`k=${k}`, kx, pad.top - 4);
+    ctx.restore();
+  }
+
+  // axes
+  ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad.left, pad.top); ctx.lineTo(pad.left, pad.top + ph);
+  ctx.lineTo(pad.left + pw, pad.top + ph);
+  ctx.stroke();
+
+  // y-axis labels
+  ctx.fillStyle = '#5d6b7a'; ctx.font = '10px system-ui'; ctx.textAlign = 'right';
+  for (let i = 0; i <= 4; i++) {
+    const p = (i / 4) * maxP;
+    const y = pad.top + ph - (i / 4) * ph;
+    ctx.fillText(p < 0.001 ? p.toExponential(1) : p.toFixed(3), pad.left - 3, y + 3);
+  }
+
+  // x-axis ticks (sample a few)
+  ctx.textAlign = 'center'; ctx.fillStyle = '#5d6b7a';
+  const tickStep = Math.max(1, Math.ceil(range / 8));
+  for (let x = xMin; x <= xMax; x += tickStep) {
+    const bx = pad.left + ((x - xMin) / range) * pw;
+    ctx.fillText(x, bx, pad.top + ph + 12);
+  }
+
+  // y label
+  ctx.save(); ctx.translate(10, pad.top + ph / 2); ctx.rotate(-Math.PI / 2);
+  ctx.fillStyle = '#5d6b7a'; ctx.font = '11px system-ui'; ctx.textAlign = 'center';
+  ctx.fillText('P(X = x)', 0, 0);
+  ctx.restore();
+}
+
+// ── GSEA ───────────────────────────────────────────────────────────────────
+function betaSample(alpha, beta) {
+  // Johnk's method for beta(a,b) with a<1, b<1 not needed here
+  // Simple rejection for Beta(0.5, 2): use inverse CDF approximation
+  // Actually: Beta(α,β) via ratio of gammas. Use simple approach.
+  // For Beta(0.5, 2): mean = 0.2, skewed left — good for "enriched near top"
+  let u, v, x, y;
+  // Use Cheng's method for general beta
+  const a = alpha, b = beta;
+  if (a < 1 && b < 1) {
+    while (true) {
+      u = Math.random(); v = Math.random();
+      x = Math.pow(u, 1/a); y = Math.pow(v, 1/b);
+      if (x + y <= 1) return x / (x + y);
+    }
+  }
+  // For a>=1 or b>=1: use simple rejection
+  const mean = a / (a + b);
+  for (let i = 0; i < 200; i++) {
+    const t = Math.random();
+    const accept = Math.pow(t, a - 1) * Math.pow(1 - t, b - 1);
+    const bound  = Math.pow(mean, a - 1) * Math.pow(1 - mean, b - 1);
+    if (Math.random() < accept / bound) return t;
+  }
+  return mean;
+}
+
+function resampleGSEA() {
+  const L = 300;  // ranked list length
+  const S = Math.max(2, Math.round(f * L));
+  gseaPositions = [];
+  if (enrichedMode) {
+    // members clustered near top: Beta(0.8, 3) positions (0=top)
+    for (let i = 0; i < S; i++) {
+      gseaPositions.push(betaSample(0.8, 3));
+    }
+  } else {
+    for (let i = 0; i < S; i++) {
+      gseaPositions.push(Math.random());
+    }
+  }
+  gseaPositions.sort((a, b) => a - b);
+  renderGSEA();
+}
+
+function renderGSEA() {
+  const canvas = $('gsea-canvas');
+  const { ctx, w, h } = setupCanvas(canvas);
+
+  const L = 300;
+  const S = Math.max(2, Math.round(f * L));
+  // Convert continuous positions to integer ranks
+  const memberRanks = new Set(gseaPositions.map(p => Math.min(L - 1, Math.floor(p * L))));
+
+  const stepUp   = 1 / memberRanks.size;
+  const stepDown = 1 / (L - memberRanks.size);
+
+  // Build walk
+  const walk = [0];
+  for (let i = 0; i < L; i++) {
+    const prev = walk[walk.length - 1];
+    walk.push(memberRanks.has(i) ? prev + stepUp : prev - stepDown);
+  }
+
+  const maxES = Math.max(...walk);
+  const minES = Math.min(...walk);
+  const esRange = Math.max(maxES - minES, 0.01);
+  const ES = maxES;
+  const ESidx = walk.indexOf(maxES);
+
+  const pad = { top: 30, right: 20, bottom: 60, left: 52 };
+  const pw = w - pad.left - pad.right;
+  const ph = h - pad.top - pad.bottom;
+
+  ctx.clearRect(0, 0, w, h);
+
+  // zero line y position
+  const zeroY = pad.top + ph * (maxES / esRange);
+
+  // --- Gene-set hit track (top mini-panel) ---
+  const trackH = 16;
+  const trackY = pad.top - trackH - 6;
+  ctx.fillStyle = '#f1f5f9';
+  ctx.fillRect(pad.left, trackY, pw, trackH);
+  ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 0.5;
+  ctx.strokeRect(pad.left, trackY, pw, trackH);
+  // Draw bars for member ranks
+  for (const r of memberRanks) {
+    const bx = pad.left + (r / (L - 1)) * pw;
+    ctx.fillStyle = '#1f2933';
+    ctx.fillRect(bx, trackY + 1, 1.5, trackH - 2);
+  }
+  ctx.fillStyle = '#5d6b7a'; ctx.font = '10px system-ui'; ctx.textAlign = 'left';
+  ctx.fillText('Gene-set S', pad.left, trackY - 2);
+
+  // --- Shaded area under curve ---
+  ctx.beginPath();
+  ctx.moveTo(pad.left, zeroY);
+  for (let i = 0; i <= L; i++) {
+    const x = pad.left + (i / L) * pw;
+    const y = pad.top + ph * (maxES - walk[i]) / esRange;
+    ctx.lineTo(x, y);
+  }
+  ctx.lineTo(pad.left + pw, zeroY);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(37,99,235,0.12)';
+  ctx.fill();
+
+  // --- Walk curve ---
+  ctx.beginPath();
+  ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 2;
+  for (let i = 0; i <= L; i++) {
+    const x = pad.left + (i / L) * pw;
+    const y = pad.top + ph * (maxES - walk[i]) / esRange;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // --- Zero line ---
+  ctx.save();
+  ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath(); ctx.moveTo(pad.left, zeroY); ctx.lineTo(pad.left + pw, zeroY); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  // --- ES dashed horizontal ---
+  const esY = pad.top + ph * (maxES - ES) / esRange;
+  ctx.save();
+  ctx.strokeStyle = '#e11d48'; ctx.lineWidth = 1.5;
+  ctx.setLineDash([5, 3]);
+  ctx.beginPath(); ctx.moveTo(pad.left, esY); ctx.lineTo(pad.left + pw, esY); ctx.stroke();
+  ctx.setLineDash([]);
+  // ES label
+  ctx.fillStyle = '#e11d48'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'left';
+  ctx.fillText(`ES = ${ES.toFixed(3)}`, pad.left + 4, esY - 4);
+  ctx.restore();
+
+  // --- Leading-edge marker ---
+  const leX = pad.left + (ESidx / L) * pw;
+  ctx.save();
+  ctx.strokeStyle = '#f97316'; ctx.lineWidth = 1;
+  ctx.setLineDash([3, 2]);
+  ctx.beginPath(); ctx.moveTo(leX, pad.top); ctx.lineTo(leX, pad.top + ph); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#f97316'; ctx.font = '10px system-ui'; ctx.textAlign = 'center';
+  ctx.fillText('leading edge', leX, pad.top + ph + 22);
+  ctx.restore();
+
+  // --- Axes ---
+  ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad.left, pad.top); ctx.lineTo(pad.left, pad.top + ph);
+  ctx.lineTo(pad.left + pw, pad.top + ph);
+  ctx.stroke();
+
+  // y-axis labels
+  ctx.fillStyle = '#5d6b7a'; ctx.font = '10px system-ui'; ctx.textAlign = 'right';
+  const yTicks = [minES, 0, maxES / 2, maxES];
+  for (const v of yTicks) {
+    const y = pad.top + ph * (maxES - v) / esRange;
+    if (y >= pad.top - 4 && y <= pad.top + ph + 4) {
+      ctx.fillText(v.toFixed(2), pad.left - 4, y + 3);
+    }
+  }
+
+  // x-axis labels
+  ctx.textAlign = 'center'; ctx.fillStyle = '#5d6b7a';
+  ctx.fillText('0', pad.left, pad.top + ph + 12);
+  ctx.fillText(L + '', pad.left + pw, pad.top + ph + 12);
+  ctx.fillText('Gene List Rank →', pad.left + pw / 2, pad.top + ph + 26);
+
+  // y label
+  ctx.save(); ctx.translate(12, pad.top + ph / 2); ctx.rotate(-Math.PI / 2);
+  ctx.fillStyle = '#5d6b7a'; ctx.font = '11px system-ui'; ctx.textAlign = 'center';
+  ctx.fillText('Enrichment Score', 0, 0);
+  ctx.restore();
+
+  // Info text
+  ctx.fillStyle = '#475569'; ctx.font = '12px system-ui'; ctx.textAlign = 'left';
+  ctx.fillText(`|S| = ${S}  (f = ${f.toFixed(2)})   mode: ${enrichedMode ? 'Enriched' : 'Null'}`, pad.left, pad.top + ph + 46);
+}
+
+// ── Wire up sliders ────────────────────────────────────────────────────────
+function link(slId, numId, setter) {
+  const sl = $(slId), num = $(numId);
+  const update = v => { setter(v); renderAll(); };
+  sl.addEventListener('input',  e => { num.value = e.target.value; update(+e.target.value); });
+  num.addEventListener('change', e => { sl.value = e.target.value;  update(+e.target.value); });
+}
+
+function clampK() {
+  const mx = Math.min(K, n);
+  $('k-sl').max = mx; $('k-num').max = mx;
+  if (k > mx) { k = mx; $('k-sl').value = k; $('k-num').value = k; }
+}
+
+link('N-sl', 'N-num', v => { N = Math.round(v); clampK(); });
+link('K-sl', 'K-num', v => { K = Math.round(v); clampK(); });
+link('n-sl', 'n-num', v => { n = Math.round(v); clampK(); });
+link('k-sl', 'k-num', v => { k = Math.round(v); });
+link('f-sl', 'f-num', v => { f = +v.toFixed(2); resampleGSEA(); });
+
+$('btn-enriched').addEventListener('click', () => {
+  enrichedMode = true;
+  $('btn-enriched').classList.add('active');
+  $('btn-null').classList.remove('active');
+  resampleGSEA();
+});
+$('btn-null').addEventListener('click', () => {
+  enrichedMode = false;
+  $('btn-null').classList.add('active');
+  $('btn-enriched').classList.remove('active');
+  resampleGSEA();
+});
+$('btn-resample').addEventListener('click', resampleGSEA);
+
+// Arrow keys adjust k
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  const mx = Math.min(K, n);
+  if (e.key === 'ArrowRight' && k < mx) { k++; $('k-sl').value = k; $('k-num').value = k; renderAll(); }
+  if (e.key === 'ArrowLeft'  && k > 0)  { k--; $('k-sl').value = k; $('k-num').value = k; renderAll(); }
+});
+
+function renderAll() {
+  renderTable();
+  renderHyper();
+}
+
+let resizeT;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeT);
+  resizeT = setTimeout(() => { renderAll(); renderGSEA(); }, 80);
+});
+
+// ── Init ───────────────────────────────────────────────────────────────────
+requestAnimationFrame(() => {
+  clampK();
+  renderAll();
+  resampleGSEA();
+});
+</script>
+</body>
+</html>

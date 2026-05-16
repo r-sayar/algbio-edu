@@ -22,9 +22,29 @@ This is a sister repo to [**rna-folding-edu**](https://github.com/r-sayar/rna-fo
 | [`hmm/`](hmm/index.html)              | **Viterbi, Forward, Backward, Posterior** on a 2-state CpG-island HMM | [open](https://r-sayar.github.io/algbio-edu/hmm/) |
 | [`alignment/`](alignment/index.html)  | Needleman-Wunsch (global) and Smith-Waterman (local) | [open](https://r-sayar.github.io/algbio-edu/alignment/) |
 | [`fm-index/`](fm-index/index.html)    | **FM Index**: BWT construction, reverse transform, backward search, locate matches | [open](https://r-sayar.github.io/algbio-edu/fm-index/) |
+| [`lander-waterman/`](lander-waterman/index.html) | **Lander–Waterman shotgun-sequencing statistics**: coverage, # contigs, contig length, gaps — Poisson simulation alongside the closed-form predictions | [open](https://r-sayar.github.io/algbio-edu/lander-waterman/) |
+| [`poisson/`](poisson/index.html) | **Poisson distribution**: PMF, predictor, real-data overlay (Rutherford-Geiger 1910) and live simulation. Includes the DNA "reads-in-window" scenario. | [open](https://r-sayar.github.io/algbio-edu/poisson/) |
+| [`binomial/`](binomial/index.html) | **Binomial distribution**: PMF + BINS assumptions, real-data overlay (Geissler 1889 sex ratios), Poisson(np) approximation toggle, live simulation. Same DNA "reads-in-window" scenario for direct comparison with Poisson. | [open](https://r-sayar.github.io/algbio-edu/binomial/) |
+| [`gene-expression-norm/`](gene-expression-norm/index.html) | **RPKM/TPM + quantile normalization + MA plot** — three-in-one within/between-sample normalization visualizer. The quantile-norm walks the slide's 5×3 toy matrix step by step (Reset/Back/Play/Next). | [open](https://r-sayar.github.io/algbio-edu/gene-expression-norm/) |
+| [`bh-procedure/`](bh-procedure/index.html) | **Benjamini-Hochberg FDR control**: sorted p-values with the `y = (i/N)·α` cutoff line, Bonferroni comparison, simulated truth panel showing empirical FDR for each correction. | [open](https://r-sayar.github.io/algbio-edu/bh-procedure/) |
+| [`nb-model/`](nb-model/index.html) | **Negative binomial mean-variance** — the DESeq2 count-model diagnostic. Log-log mean-vs-variance scatter overlaying the Poisson line (slope 1) and `Var = μ + α·μ²` curves; μ and α sliders. | [open](https://r-sayar.github.io/algbio-edu/nb-model/) |
+| [`pca/`](pca/index.html) | **Principal Component Analysis** — 4-stage walkthrough on a tilted 2D Gaussian (center → axes → rotate → project) plus a 50-D scree plot with automatic elbow detection. Analytical 2×2 + Jacobi eigendecomposition. | [open](https://r-sayar.github.io/algbio-edu/pca/) |
+| [`tsne-umap/`](tsne-umap/index.html) | **t-SNE & UMAP kernel comparison**: Gaussian (high-D), Student-t (low-D), UMAP `1/(1+a·d^(2b))`, and k-NN Heaviside plotted on one axis — the "heavy tails" story made visual. Toy-cluster deformations under each kernel. | [open](https://r-sayar.github.io/algbio-edu/tsne-umap/) |
+| [`knn-lda/`](knn-lda/index.html) | **k-NN vs LDA** side-by-side: k-NN decision-region heatmap + click-to-drop-query-point + line-to-neighbors; LDA linear boundary perpendicular to `w = Σ⁻¹(μ₁ − μ₀)` with the 1-D Fisher projection histogram. | [open](https://r-sayar.github.io/algbio-edu/knn-lda/) |
+| [`roc-pr/`](roc-pr/index.html) | **ROC & Precision-Recall curves** with a draggable threshold τ driving three coupled panels (score histogram, ROC, PR). Imbalance presets (π₁ = 0.5 → 0.001) show why PR matters on rare-positive problems. | [open](https://r-sayar.github.io/algbio-edu/roc-pr/) |
+| [`functional-enrichment/`](functional-enrichment/index.html) | **Gene Ontology over-representation analysis + GSEA**: interactive 2×2 contingency table, exact hypergeometric PMF with tail shading (Fisher's exact p-value), and GSEA random-walk enrichment score. Sliders for N/K/n/k; Enriched vs Null mode toggle. | [open](https://r-sayar.github.io/algbio-edu/functional-enrichment/) |
 | [`evoformer/`](evoformer/index.html)  | 3-D voxel walk through one Evoformer block (AlphaFold) | [open](https://r-sayar.github.io/algbio-edu/evoformer/) |
 | [`structure-scores/`](structure-scores/index.html) | GDT-TS / TM-score / lDDT — sliders + intuition | [open](https://r-sayar.github.io/algbio-edu/structure-scores/) |
 | [`phylo/`](phylo/)                    | Neighbor-Joining + UPGMA + Fitch + Sankoff (Python + step-by-step PNG figures) | [browse](phylo/) |
+
+The eight `gene-expression-norm` / `bh-procedure` / `nb-model` / `pca` /
+`tsne-umap` / `knn-lda` / `roc-pr` / `functional-enrichment` demos accompany the
+*Gene Expression Analysis* lectures (Vingron / Jahn / Heinrich / Marsico, FU Berlin) —
+see the companion text notes at
+[r-sayar/albi_exams](https://github.com/r-sayar/albi_exams)
+(`GeneExpression_DetailedNotes_BlocksI-III.md`,
+`GeneExpression_DetailedNotes_BlocksIV-VII.md`, and
+`GeneExpression_DetailedNotes_BlockVIII.md`).
 
 For RNA structure (Nussinov + Zuker + 3D PDB):
 **[r-sayar/rna-folding-edu](https://github.com/r-sayar/rna-folding-edu)** ([open](https://r-sayar.github.io/rna-folding-edu/visualizer/)).
@@ -90,6 +110,38 @@ The right sidebar always shows the **C array** and the **Occ table** with
 the currently-consulted cells highlighted in orange. The active line of the
 pseudocode lights up yellow. The bottom yellow strip spells out the
 arithmetic for the current step.
+
+### Lander–Waterman shotgun-sequencing statistics — `lander-waterman/`
+
+Interactive Poisson model of whole-genome shotgun sequencing. Sliders set
+coverage `a`, read length `L`, minimum overlap `θ = Ω/L`, and the "real"
+genome size `G`. The top score row shows the closed-form theoretical
+predictions side-by-side with the value measured from a single Poisson
+simulation on a 5 000-bp cartoon genome (rescaled to keep the same `a`).
+
+What's visualised:
+
+1. **Genome cartoon** — 5 000 bp strip with reads drawn as colored bars,
+   stacked greedily. Reads in the same contig share a colour; the
+   rightmost read of each contig is outlined in yellow and labelled "H"
+   (the *head* in Lander–Waterman's coin-flip argument). Covered regions
+   are shaded blue, gaps red.
+2. **Theory curves** — three side-by-side mini-plots of
+   `% genome in contigs`, `# contigs`, and `mean contig length` vs.
+   coverage `a`, with a blue dot marking the current operating point.
+3. **Simulation report** — table comparing theory vs. measurement on the
+   cartoon: `N` reads placed, fraction in contigs, # contigs, reads /
+   contig, mean / longest contig length, # gaps, mean gap.
+4. **Contig-length histogram** — empirical distribution from the
+   simulation.
+5. **Live arithmetic** — the LW formulas evaluated with your current
+   slider values (`a = N·L/G`, `q = 1−e^{-a}`, `E[#c] = N·e^{-(1−θ)a}`,
+   `E[reads/c] = e^{(1−θ)a}`, `E[len] = (e^a − 1)·L / a`).
+
+Presets cover BAC 2× coverage, WGS 1× / 5×, E. coli 600× MiSeq, and the
+canonical "Lander–Waterman 99 % coverage" point (`a = −ln(0.01) ≈ 4.6`).
+
+![Lander–Waterman screenshot](lander-waterman/preview.png)
 
 ### Pairwise alignment — `alignment/`
 
